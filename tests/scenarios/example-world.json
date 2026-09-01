@@ -1,0 +1,10 @@
+{
+  "slot_data": {},
+  "updates": [
+    {
+      "state": {"received_items":[{"item_id":1001,"location_id":2001,"player":1,"flags":1}],"checked_locations":[2001],"missing_locations":[],"stored_data":{}},
+      "expect": {"locations":[{"id":2001,"name":"Chest","region":"Hall","checked":true,"reachable":true,"excluded":false}], "inventory":[{"id":1001,"name":"Key","count":1}]}
+    }
+  ],
+  "expect": {"locations":1,"regions":2}
+}

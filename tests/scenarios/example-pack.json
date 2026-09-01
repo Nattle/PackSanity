@@ -1,0 +1,43 @@
+{
+  "events": [
+    {
+      "type": "connected",
+      "player": 1,
+      "team": 0,
+      "seed": "fixture"
+    },
+    {
+      "type": "item",
+      "index": 0,
+      "item": 1001,
+      "name": "Sword",
+      "player": 1
+    },
+    {
+      "type": "retrieved",
+      "key": "_read_hints_0_1",
+      "value": [
+        {
+          "location": 2001,
+          "finding_player": 1
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "items": 1,
+    "sections": 1,
+    "providerCounts": {
+      "sword": 1
+    },
+    "mappedLocations": {
+      "2001": [
+        "area/chest"
+      ]
+    },
+    "highlights": {
+      "area/chest": 1
+    },
+    "unresolvedReferences": []
+  }
+}

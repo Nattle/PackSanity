@@ -1,0 +1,2 @@
+SQLite 3.50.4 is published by the SQLite project as public-domain deliverable code.
+https://www.sqlite.org/copyright.html

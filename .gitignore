@@ -1,0 +1,11 @@
+/build/
+/.idea/
+*.swp
+__pycache__/
+
+.gradle/
+.kotlin/
+**/build/
+**/__pycache__/
+*.pyc
+local.properties

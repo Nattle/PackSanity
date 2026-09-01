@@ -1,0 +1,4 @@
+option('jni', type: 'boolean', value: false, description: 'Build the JVM/Android Lua adapter')
+option('python_bridge', type: 'boolean', value: false, description: 'Build the embedded CPython 3.13 C API')
+option('python', type: 'string', value: 'python3.13', description: 'Python interpreter for the optional embedded bridge')
+option('tests', type: 'boolean', value: true, description: 'Build and run native regression tests')

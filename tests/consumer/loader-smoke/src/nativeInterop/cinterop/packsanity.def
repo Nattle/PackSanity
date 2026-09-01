@@ -1,0 +1,2 @@
+headers = packsanity/lua_host.h packsanity/python_host.h
+package = dev.nattle.packsanity.consumer.native

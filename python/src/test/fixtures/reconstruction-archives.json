@@ -1,0 +1,79 @@
+[
+  {
+    "game": "Librarian Tidy Up the Arcane Library",
+    "packageRoot": "librarian",
+    "version": "1.1.3",
+    "archiveName": "librarian-1.1.3.apworld",
+    "sourceUrl": "https://github.com/Str8UpWHITE64/Librarian-AP/releases/download/1.1.3/librarian.apworld",
+    "sha256": "cff6044324b91f639174dc8a4094aa89583f26c410e970f1791e50294ef2043e",
+    "options": [
+      {}
+    ]
+  },
+  {
+    "game": "Librarian Tidy Up the Arcane Library",
+    "packageRoot": "librarian",
+    "version": "2.0.3",
+    "archiveName": "librarian-2.0.3.apworld",
+    "sourceUrl": "https://github.com/Str8UpWHITE64/Librarian-AP/releases/download/2.0.3/librarian.apworld",
+    "sha256": "820e20bb1ae2a3696ed437692a30a3673aa9e086666d99a91d742eceeeaae7a0",
+    "options": [
+      {},
+      {
+        "goal": "floor_1"
+      }
+    ]
+  },
+  {
+    "game": "Librarian Tidy Up the Arcane Library",
+    "packageRoot": "librarian",
+    "version": "3.0.1",
+    "archiveName": "librarian-3.0.1.apworld",
+    "sourceUrl": "https://github.com/Str8UpWHITE64/Librarian-AP/releases/download/3.0.1/librarian.apworld",
+    "sha256": "d22f65cfee8f0234fc7beae3bade62cf24bf20bf75189ec9464256d23788a7f5",
+    "options": [
+      {},
+      {
+        "series_per_unlock": 3
+      }
+    ]
+  },
+  {
+    "game": "Paper Mario: The Thousand-Year Door",
+    "packageRoot": "ttyd",
+    "version": "0.12.1a",
+    "archiveName": "ttyd-0.12.1a.apworld",
+    "sourceUrl": "https://github.com/jamesbrq/ArchipelagoTTYD/releases/download/v0.12.1a/ttyd.apworld",
+    "sha256": "ad685501f5850941cd085d2295d7ac8a486ad2968091e4b5e13f87981ed2b07d",
+    "options": [
+      {}
+    ]
+  },
+  {
+    "game": "Paper Mario: The Thousand-Year Door",
+    "packageRoot": "ttyd",
+    "version": "0.13.0a",
+    "archiveName": "ttyd-0.13.0a.apworld",
+    "sourceUrl": "https://github.com/jamesbrq/ArchipelagoTTYD/releases/download/v0.13.0a/ttyd.apworld",
+    "sha256": "ef2748c484b6fc665d839953ea5266ed974f6972d32c51d92297ae1370fc0f9e",
+    "options": [
+      {}
+    ]
+  },
+  {
+    "game": "Paper Mario: The Thousand-Year Door",
+    "packageRoot": "ttyd",
+    "version": "0.14.0",
+    "archiveName": "ttyd-0.14.0.apworld",
+    "sourceUrl": "https://github.com/jamesbrq/ArchipelagoTTYD/releases/download/v0.14.0/ttyd.apworld",
+    "sha256": "9376d94ee192cdb632f11b638e0f1130d6196a1d935901191f7d75b5c8b8bc75",
+    "options": [
+      {},
+      {
+        "cooksanity": 1,
+        "shinesanity": 0,
+        "troublesanity": 0
+      }
+    ]
+  }
+]

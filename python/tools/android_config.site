@@ -1,0 +1,17 @@
+# PackSanity's pinned mobile CPython prefixes intentionally exclude gettext.
+ac_cv_header_libintl_h=no
+ac_cv_func_gettext=no
+ac_cv_func_dgettext=no
+ac_cv_func_dcgettext=no
+ac_cv_func_textdomain=no
+ac_cv_func_bindtextdomain=no
+
+# Do not discover host-only DBM implementations while cross-compiling a mobile runtime.
+ac_cv_header_gdbm_h=no
+ac_cv_header_gdbm_dash_ndbm_h=no
+ac_cv_header_ndbm_h=no
+ac_cv_header_db_h=no
+ac_cv_lib_gdbm_gdbm_open=no
+ac_cv_search_dbm_open=no
+py_cv_module__dbm=missing
+py_cv_module__gdbm=missing

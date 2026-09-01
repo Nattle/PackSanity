@@ -1,0 +1,7 @@
+local logic = require('logic')
+local file = assert(io.open('data/value.txt', 'r'))
+assert(file:read('*l') == 'PackSanity')
+file:close()
+assert(logic.answer() == 42)
+Tracker:AddItems('items/items.json')
+assert(Tracker:FindObjectForCode('FIXTURE-CODE').Name == 'fixture-code')

@@ -1,0 +1,5 @@
+{
+  // The fixture deliberately uses JSONC and a variant overlay.
+  "package_uid": "packsanity-minimal",
+  "variants": { "standard": { "display_name": "Standard" } },
+}

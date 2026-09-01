@@ -1,0 +1,64 @@
+name: Build PackSanity release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 0.3.0-rc.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  mobile:
+    runs-on: macos-15
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: |
+          python -m pip install meson ninja
+          sdkmanager 'ndk;27.3.13750724' 'cmake;3.22.1' 'platforms;android-37' 'build-tools;37.0.0'
+      - run: |
+          ./gradlew spotlessCheck :loader:jvmTest
+          make test
+          python="$(python python/tools/prepare_runtime.py)"
+          PACKSANITY_TEST_JAVA_HOME="$JAVA_HOME" "$python" -m unittest discover -s python/src/test/python
+          "$python" tests/test_integration.py
+      - run: python tools/build_release.py --version "$RELEASE_VERSION"
+      - run: python tools/verify_release.py build/release/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packsanity-mobile-and-macos
+          path: build/release/dist
+          if-no-files-found: error
+
+  linux-host:
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install meson ninja
+      - run: python tools/build_release.py --version "$RELEASE_VERSION" --host-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packsanity-linux-host
+          path: build/release/dist-host-linux-x86_64
+          if-no-files-found: error
