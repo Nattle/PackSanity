@@ -18,14 +18,25 @@ _updates = 0
 
 def load_world(request):
     global _loaded
-    name = json.loads(request)['package_root']
+    payload = json.loads(request)
+    name = payload['package_root']
+    if payload.get('print'):
+        print('APWorld output')
     if _loaded is not None and _loaded != name:
         raise RuntimeError('An APWorld is already loaded. Create a new interpreter before switching worlds.')
     _loaded = name
     return json.dumps({'world': _loaded, 'updates': _updates})
 
 def initialize_runtime(request):
-    if json.loads(request).get('fail'):
+    failure = json.loads(request).get('fail')
+    if failure == 'empty':
+        raise AttributeError
+    if failure == 'unprintable':
+        class UnprintableError(Exception):
+            def __str__(self):
+                raise RuntimeError('formatting failed')
+        raise UnprintableError
+    if failure:
         raise ValueError('generation failed')
     return json.dumps({'world': _loaded})
 
@@ -39,7 +50,8 @@ def shutdown_tracker():
 '''
 
 
-def compile_probe(root: Path, output: Path, stream: bool = False) -> tuple[Path, Path]:
+def compile_probe(root: Path, output: Path, stream: bool = False, *,
+                  source: Path | None = None) -> tuple[Path, Path]:
     """Compile against the host Python, or the pinned CPython build when explicitly supplied."""
     includes = [Path(sysconfig.get_path('include'))]
     library = Path(sysconfig.get_config_var('LIBDIR')) / sysconfig.get_config_var('LDLIBRARY')
@@ -49,13 +61,15 @@ def compile_probe(root: Path, output: Path, stream: bool = False) -> tuple[Path,
         library = home / framework
     native = root.parent / 'native'
     source_name = 'native_bridge_stream_probe' if stream else 'native_bridge_probe'
-    binary = output / source_name
+    if source is None:
+        source = root / f'src/test/cpp/{source_name}.c'
+    binary = output / source.stem
     flags = ['-Wl,--export-dynamic'] if sys.platform.startswith('linux') else []
     command = shlex.split(os.environ.get('CC', 'cc')) + [
         '-Wall', '-Wextra', '-Werror=return-type', *flags,
         '-I', str(native / 'include'),
         *[arg for directory in includes for arg in ('-I', str(directory))],
-        str(root / f'src/test/cpp/{source_name}.c'),
+        str(source),
         str(native / 'src/python_host.c'), str(library),
         '-Wl,-rpath,' + str(library.parent), '-pthread',
         *shlex.split(sysconfig.get_config_var('LIBS') or ''),
@@ -116,6 +130,27 @@ class NativeBridgeTest(unittest.TestCase):
                            'worker:load:0:{"package_root":"ttyd"}', 'initialize:0:{}')
         self.assertEqual('ERROR generation failed', lines[2])
         self.assertEqual('OK {"world": "ttyd"}', lines[-1])
+
+    def test_exception_type_survives_empty_or_unprintable_error(self):
+        lines = self.probe('create:0', 'load:0:{"package_root":"example"}',
+                           'initialize:0:{"fail":"empty"}',
+                           'worker:initialize:0:{"fail":"unprintable"}', 'initialize:0:{}')
+        self.assertEqual('ERROR AttributeError', lines[2])
+        self.assertEqual('ERROR UnprintableError', lines[3])
+        self.assertEqual('OK {"world": "example"}', lines[-1])
+
+    def test_native_command_keeps_world_stdout_out_of_result_json(self):
+        source = self.root.parent / 'native/src/packsanity_python.c'
+        binary, home = compile_probe(self.root, self.output, source=source)
+        load = self.output / 'load.json'
+        load.write_text(json.dumps({'package_root': 'example', 'print': True}))
+        initialize = self.output / 'initialize.json'
+        initialize.write_text('{}')
+        result = subprocess.run([binary, home, self.modules, load, initialize],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual({'world': 'example'}, json.loads(result.stdout))
+        self.assertIn('APWorld output', result.stderr)
 
     def test_import_failure_does_not_poison_next_interpreter(self):
         broken = self.output / 'broken'

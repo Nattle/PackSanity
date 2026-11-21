@@ -25,6 +25,7 @@ class RuntimeStagingTest(unittest.TestCase):
                 "BaseClasses.py": "CollectionState = ItemClassification = LocationProgressType = MultiWorld = object\n",
                 "worlds/AutoWorld.py": "class World: pass\n",
                 "worlds/LauncherComponents.py": "from Launcher import launch\n",
+                "worlds/AutoSNIClient.py": "from worlds import LauncherComponents\n",
                 "worlds/generic/Rules.py": "def exclusion_rules(*args): pass\n",
             }
             for name in (
@@ -70,7 +71,10 @@ class RuntimeStagingTest(unittest.TestCase):
             environment = dict(os.environ, PYTHONPATH=str(output), PYTHONDONTWRITEBYTECODE="1")
             probe = subprocess.run([
                 sys.executable, "-B", "-S", "-c",
-                "import json, pathlib, sys; import packsanity_ut_adapter as a; import worlds.LauncherComponents, bsdiff4, requests, orjson, pkg_resources; "
+                "import json, pathlib, sys; import packsanity_ut_adapter as a; "
+                "import worlds.AutoSNIClient, bsdiff4, requests, orjson, pkg_resources; "
+                "from orjson import orjson as encoder; "
+                "assert encoder.loads(orjson.dumps({'foo': 1})) == {'foo': 1}; "
                 f"sys.path.insert(0, {str(resources)!r}); "
                 "assert set(pkg_resources.resource_listdir('resource_fixture.data', 'assets')) == {'one.json', 'nested'}; "
                 "assert pkg_resources.resource_isdir('resource_fixture.data', 'assets/nested'); "

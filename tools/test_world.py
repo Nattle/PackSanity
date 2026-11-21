@@ -108,7 +108,7 @@ def main():
               f"PASS {game} locations={report['locations']} regions={report['regions']} maps={report['maps']} updates={len(updates)}")
         return 0
     except Exception as error:
-        print(f"FAIL {error}", file=sys.stderr)
+        print(f"FAIL {str(error) or type(error).__name__}", file=sys.stderr)
         return 1
 
 

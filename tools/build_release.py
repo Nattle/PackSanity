@@ -181,7 +181,6 @@ def release_manifest(release, version, files):
         "version": version,
         "sourceBaseCommit": output("git", "rev-parse", "HEAD"),
         "sourceTreeSha256": digest.hexdigest(),
-        "parityReferenceCommit": json.loads((ROOT / "extraction-manifest.json").read_text())["parityReferenceCommit"],
         "runtimeId": LOCK["runtimeId"],
         "cpython": PYTHON_VERSION,
         "archipelago": LOCK["archipelago"],

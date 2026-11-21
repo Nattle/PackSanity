@@ -1,4 +1,4 @@
-project('packsanity', 'c', version: '0.1.0', meson_version: '>=1.3.0',
+project('packsanity', 'c', version: '0.1.1', meson_version: '>=1.3.0',
   license: 'MIT', default_options: ['c_std=c99', 'warning_level=2', 'default_library=static'])
 
 cc = meson.get_compiler('c')

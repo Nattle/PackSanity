@@ -85,12 +85,9 @@ def main() -> None:
     copy_file(args.archipelago_source / "Fill.py", output / "Fill.py")
     copy_file(args.archipelago_source / "worlds/Files.py", output / "worlds/Files.py")
     copy_tree(args.archipelago_source / "worlds/_bizhawk", output / "worlds/_bizhawk")
-    # APWorlds commonly import this core registration API even when PackSanity
-    # does not expose the desktop launcher UI itself.
-    copy_file(
-        args.archipelago_source / "worlds/LauncherComponents.py",
-        output / "worlds/LauncherComponents.py",
-    )
+    # APWorlds can import these registration APIs without the desktop launcher or SNI client.
+    for relative in ("worlds/LauncherComponents.py", "worlds/AutoSNIClient.py"):
+        copy_file(args.archipelago_source / relative, output / relative)
     for relative in CORE_DIRECTORIES:
         copy_tree(args.archipelago_source / relative, output / relative)
     copy_tree(root / "src/main/runtime_template/worlds", output / "worlds")

@@ -168,6 +168,30 @@ class LoadingIntegrationTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['status'], 'passed')
         self.assertIn('WORLD IMPORT LOG', result.stderr)
 
+    def test_apworld_imports_staged_registration_and_json_fallback(self):
+        world = Path(self.temp.name)/'registration_world.apworld'
+        source = (ROOT/'tests/fixtures/tiny_world/__init__.py').read_text()
+        with zipfile.ZipFile(world, 'w') as archive:
+            archive.writestr('registration_world/__init__.py',
+                             'from worlds.AutoSNIClient import SNIClient, Read, SnesReader, SnesData\n'
+                             'from orjson import orjson\n'
+                             'assert orjson.loads(orjson.dumps({"sample": 1})) == {"sample": 1}\n'+source)
+        result = self.run_world('--fixture', str(ROOT/'tests/scenarios/example-world.json'), '--json', world=world)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['state']['inventory'][0]['count'], 1)
+
+    def test_world_generation_error_without_a_message_reports_its_type(self):
+        world = Path(self.temp.name)/'error_world.apworld'
+        source = (ROOT/'tests/fixtures/tiny_world/__init__.py').read_text()
+        source = source.replace('    def create_regions(self):',
+                                '    def generate_early(self):\n        raise AttributeError\n\n'
+                                '    def create_regions(self):')
+        with zipfile.ZipFile(world, 'w') as archive:
+            archive.writestr('error_world/__init__.py', source)
+        result = self.run_world('--json', world=world)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[-1], 'FAIL AttributeError')
+
     def make_mapped_world(self, external=False, wrapped=False, uppercase=False):
         name = 'mapped_world'
         archive_root = name.title() if uppercase else name

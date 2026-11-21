@@ -117,7 +117,7 @@ Git. The synthetic fixtures and regression suite live here and use only local te
 - `cli/` and `tools/`: integration clients of the library, not alternate pack implementations.
 
 Use `./gradlew :loader:publishToMavenLocal` for a local Kotlin consumer, then add
-`implementation("dev.nattle.packsanity:loader:0.1.0-SNAPSHOT")` with `mavenLocal()` enabled.
+`implementation("dev.nattle.packsanity:loader:0.1.1-SNAPSHOT")` with `mavenLocal()` enabled.
 Native consumers install with `meson install -C build/meson` and use pkg-config packages
 `packsanity-lua` and (when enabled) `packsanity-python`. Meson consumers use
 `dependency('packsanity-lua', static: true)` for the default static library. C and C++ headers expose

@@ -1,6 +1,8 @@
+#define _POSIX_C_SOURCE 200809L
 #include "packsanity/python_host.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 static char *read_json(const char *path) {
     FILE *file = fopen(path, "rb");
@@ -22,6 +24,23 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: packsanity-python PYTHON_HOME MODULE_PATH LOAD_WORLD.json INITIALIZE.json [UPDATE.json ...]\n");
         return 2;
     }
+    // Keep APWorld output on stderr even when the interpreter flushes during shutdown.
+    int result_fd = dup(STDOUT_FILENO);
+    if (result_fd < 0) {
+        perror("Could not save standard output");
+        return 1;
+    }
+    FILE *result_output = fdopen(result_fd, "w");
+    if (!result_output) {
+        perror("Could not open result stream");
+        close(result_fd);
+        return 1;
+    }
+    if (dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
+        perror("Could not redirect APWorld output");
+        fclose(result_output);
+        return 1;
+    }
     char *error = NULL;
     char *result = NULL;
     char *request = NULL;
@@ -38,15 +57,17 @@ int main(int argc, char **argv) {
         free(request); request = NULL;
         if (!ok) goto failed;
     }
-    puts(result);
-    packsanity_python_free_string(result);
     packsanity_python_close(state);
-    return 0;
+    int written = fprintf(result_output, "%s\n", result);
+    int closed = fclose(result_output);
+    packsanity_python_free_string(result);
+    return written < 0 || closed == EOF ? 1 : 0;
 failed:
     fprintf(stderr, "FAIL %s\n", error ? error : "CPython request failed");
     free(request);
     packsanity_python_free_string(result);
     packsanity_python_free_string(error);
     if (state) packsanity_python_close(state);
+    fclose(result_output);
     return 1;
 }

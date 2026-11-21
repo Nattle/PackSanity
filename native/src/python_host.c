@@ -33,7 +33,12 @@ static void set_python_error(char **error) {
     PyErr_NormalizeException(&type, &value, &traceback);
     PyObject *text = value == NULL ? NULL : PyObject_Str(value);
     const char *message = text == NULL ? NULL : PyUnicode_AsUTF8(text);
+    if ((message == NULL || message[0] == '\0') && type != NULL && PyType_Check(type)) {
+        message = ((PyTypeObject *) type)->tp_name;
+    }
     if (error != NULL) *error = copy_string(message);
+    // Formatting the exception can itself set an error. The host has already captured it.
+    PyErr_Clear();
     Py_XDECREF(text);
     Py_XDECREF(traceback);
     Py_XDECREF(value);

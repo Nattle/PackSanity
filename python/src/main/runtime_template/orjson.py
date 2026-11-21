@@ -5,6 +5,10 @@ remain deliberately unsupported on mobile.
 """
 
 import json
+import sys
+
+# Real orjson exposes its encoder submodule through `from orjson import orjson`.
+orjson = sys.modules[__name__]
 
 
 def loads(value):
