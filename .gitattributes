@@ -2,6 +2,6 @@
 native/vendor/** -whitespace
 # Gradle's Windows launcher deliberately uses CRLF.
 gradlew.bat text eol=crlf whitespace=cr-at-eol
-# Extracted Python modules retain their upstream EOF spacing.
+# Preserve EOF spacing in runtime sources.
 python/src/main/python/*.py whitespace=-blank-at-eof
 lua/poptracker_host/*.lua whitespace=-blank-at-eof

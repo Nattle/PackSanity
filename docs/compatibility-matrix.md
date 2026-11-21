@@ -1,48 +1,39 @@
 # Compatibility matrix
 
-This is the PackSanity 0.1 loading contract. “Supported” means the synthetic test surface exercises
-the behavior; it does not mean every real pack using that API is guaranteed to work.
+## PopTracker
 
-| Area | Status | Notes |
-| --- | --- | --- |
-| Lua runtime | Supported | Vendored official Lua 5.4.9; bounded heap and instruction count per host call. |
-| `scripts/init.lua`, `require` | Supported | Hosts register pack modules; slash and dotted aliases are a host policy. |
-| JSON item-code lookup | Supported | Matches PopTracker's case-insensitive JSON-item-code quirk. |
-| `Tracker:AddItems/Maps/Locations/Layouts/Classes` | Supported | Registrations are observable through the `PackSanity*` adapter functions. |
-| Tracker objects, providers, rules, code/frame/location handlers | Supported | PopTracker 0.36 compatibility surface with refresh budgets, live provider counts, hosted items, and canonical region access. |
-| Read-only pack `io` | Supported | Registered in-memory files only; no device filesystem. |
-| Archipelago callbacks and command extraction | Supported | The host creates callbacks and queues PopTracker-facing commands; networking belongs to the embedding application. |
-| `ScriptHost:RunScriptAsync`, `RunStringAsync` | Supported synchronously | No background execution is created. |
-| `AutoTracker` memory reads/watches | Intentionally unavailable | Reads return `0`; watches return `false`; no local-game process is attached. |
-| `ScriptHost` memory/variable watches | Intentionally unavailable | Return `false`; a future supported provider may extend this deliberately. |
-| `Tracker:OpenLink` | Intentionally unavailable | Returns `false`; hosts do not open external URLs. |
-| Native Lua modules, `dofile`, `loadfile`, filesystem module search | Intentionally unavailable | Removed from the sandbox. |
-| Pack-driven layout mutation / custom UI clicks | Not yet modeled | Outside this host's data-only boundary. |
+| API or capability | PackSanity behavior |
+| --- | --- |
+| Lua runtime | Lua 5.4.9 with memory and instruction budgets. |
+| `scripts/init.lua`, `require` | Registered pack modules with slash and dotted aliases. |
+| `Tracker:AddItems/Maps/Locations/Layouts/Classes` | The loader parses files registered by the selected variant and retains registration order. |
+| Tracker objects, providers, rules, code/frame/location handlers | PopTracker 0.36 compatibility surface with bounded refreshes, live provider counts, hosted items, and canonical region access. JSON item codes are case-insensitive. |
+| Pack `io` | Read-only access to registered in-memory files. |
+| Archipelago callbacks | The host dispatches callbacks and queues outgoing commands. The caller handles networking. |
+| `ScriptHost:RunScriptAsync`, `RunStringAsync` | Run synchronously. |
+| `AutoTracker` memory reads and watches | Reads return `0`. Watch registration returns `false`. |
+| `ScriptHost` memory and variable watches | Watch registration returns `false`. |
+| `Tracker:OpenLink` | Returns `false`. |
+| Native modules, `dofile`, `loadfile`, filesystem module search | Unavailable. |
+| Pack-driven layout mutation and custom UI clicks | Outside the data model. |
 
-The machine-facing adapter names intentionally use `PackSanity*`. `Tracker`, `ScriptHost`,
-`AutoTracker`, and `Archipelago` remain the pack-facing compatibility names.
+Pack-facing APIs use the standard PopTracker names. The library uses `PackSanity*` for
+host adapter functions. In addition to standard PopTracker metadata, manifests can set
+`min_packsanity_version`, `target_packsanity_version`,
+`min_packsanity_compatibility_level`, and `target_packsanity_compatibility_level`.
+Consumers supply any override archives.
 
-`tools/test_pack.py` is an activation harness: it resolves the outer pack manifest, stages
-neutral JSON/JSONC items and locations for literal and conventional `Tracker:Add*` registrations,
-then boots a clean host session. It intentionally does not claim to be a complete renderer or
-gameplay simulation.
+## APWorlds
 
+| Capability | PackSanity behavior |
+| --- | --- |
+| Archive and version gates | Validates package structure and declared container and AP versions. [Supported Archipelago core version](../python/runtime.lock.json) |
+| Imports | Uses staged dependencies. The core includes `worlds.AutoSNIClient` for registration imports. The pure-Python JSON fallback supports `loads` and `dumps` through both `import orjson` and `from orjson import orjson`. |
+| Reconstruction | Uses seed slot data and flat player YAML when required. Runs `generate_early`, `create_regions`, `create_items`, `set_rules`, `connect_entrances`, and `generate_basic`. Weighted YAML, triggers, linked options, plando, and seed fill are outside scope. |
+| State and maps | Replays inventory, checks, reachability, and world-declared map, entrance, and storage projections. Accepts a companion map archive. |
+| Session lifecycle | One subinterpreter per C handle, with independent overlapping handles and serialized calls. Switch world archives through a new handle or process. |
 
-The primary `test-pack.sh` command additionally uses the extracted shared parser and dynamic
-registration discovery rather than the legacy literal-registration boot runner. It parses
-items, locations, maps, layouts and AP mappings; executes the selected variant in a fresh native
-runtime; exposes callback/state/highlight checks and loading diagnostics. Some parser diagnostics
-are informational; `--strict` intentionally treats all diagnostics as requiring review.
-
-The APWorld path includes package/AP/container checks, the fixed dependency gate, YAML-less or
-flat-YAML tracker reconstruction, received-item/check snapshots, reachability, internal/companion
-map resources, and APWorld-declared entrance/storage behavior. It supports AP 0.6.8 and the
-optional upstream tracker package pin in `UniversalTrackerPackage.kt`; it does not claim compatibility with arbitrary
-future APWorld/AP versions. Weighted YAML, seed fill, desktop UI/networking and dependency
-installation from pack requirements are outside the supported boundary. See docs/testing.md.
-
-The Python bridge opens one subinterpreter per handle. Serialized closes, reconnects,
-archive/version switches through new handles, and independent overlapping handles are supported.
-An explicit missing-location list, including an empty list, makes checked plus missing IDs
-authoritative. A changed complete slot-data snapshot rebuilds and replays state against the
-candidate graph before publication. The caller accumulates partial network packets.
+Consumers accumulate partial network packets. An explicit `missing_locations` list,
+including an empty list, makes the checked and missing IDs authoritative. A changed
+complete slot-data snapshot rebuilds the graph and replays state before publishing it.
+[Scenarios for verifying a specific pack or seed](testing.md)
