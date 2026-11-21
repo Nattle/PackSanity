@@ -43,6 +43,8 @@ def main():
                 bundle.extractall(consumer / target, filter="data")
         project = consumer / "project"
         shutil.copytree(ROOT / "tests/consumer", project)
+        pack = consumer / "pack"
+        shutil.copytree(ROOT / "tests/fixtures/callback-pack", pack)
         assets = project / "android-smoke/src/main/assets"
         assets.mkdir()
         world = assets / "tiny_world.apworld"
@@ -52,6 +54,7 @@ def main():
             f"-PpacksanityRepository={consumer / 'maven'}",
             f"-PpacksanityVersion={manifest['version']}",
             f"-PpacksanityNativeDir={consumer / 'host/lib'}",
+            f"-PpacksanityFixtureDir={pack}",
             f"-PpacksanityIosHeaders={consumer / 'ios/include'}",
             ":loader-smoke:runSmoke", ":loader-smoke:compileKotlinIosArm64",
             ":loader-smoke:compileKotlinIosSimulatorArm64", ":android-smoke:assembleDebug")

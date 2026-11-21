@@ -1,6 +1,6 @@
 # Compatibility matrix
 
-This is the PackSanity 0.3 loading contract. “Supported” means the synthetic test surface exercises
+This is the PackSanity 0.1 loading contract. “Supported” means the synthetic test surface exercises
 the behavior; it does not mean every real pack using that API is guaranteed to work.
 
 | Area | Status | Notes |

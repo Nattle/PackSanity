@@ -217,7 +217,7 @@ def main():
     parser.add_argument("--android-sdk", type=Path, default=os.getenv("ANDROID_HOME", os.getenv("ANDROID_SDK_ROOT")))
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?", args.version):
-        parser.error("Use a version such as 0.3.0-rc.1")
+        parser.error("Use a version such as 0.1.0")
     if not args.host_only and (sys.platform != "darwin" or not args.android_sdk):
         parser.error("A full release requires macOS with Xcode and an Android SDK (use --android-sdk)")
     # Keep multiple versions and repeated builds separate from old Gradle metadata.

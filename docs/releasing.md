@@ -1,11 +1,11 @@
 # Building and consuming PackSanity releases
 
-The first release candidate uses version `0.3.0-rc.1` and UT runtime ID
+Use `0.1.0` for the first release and `v0.1.0` for its Git tag. The UT runtime ID is
 `packsanity-ut-runtime-3`. Build the artifacts together from one PackSanity revision.
 
 ```sh
 export ANDROID_HOME=/path/to/android/sdk
-python3 tools/build_release.py --version 0.3.0-rc.1
+python3 tools/build_release.py --version 0.1.0
 python3 tools/verify_release.py build/release/dist
 ```
 
@@ -58,6 +58,12 @@ after namespace and signing setup. [Kotlin publication guide](https://kotlinlang
    to preserve informational item filtering in the mobile UI.
 5. Run Waystone's Gradle release and runtime smoke gates using only the resolved artifacts
    as release inputs. Remove the runtime source copies and obsolete build tasks in that change.
+
+The public `LuaPackSession` API includes `withRefresh` and
+`stageLocationAccessibility` for bounded accessibility updates, plus
+`beginArchipelagoItemTracking` and `clearAndReplayArchipelagoProgress` for a pack's
+live provider counts and replay. Waystone supplies the complete slot-data snapshot and
+checked locations. It also stages its catalog's bundled APWorlds as app assets.
 
 The disposable consumer in `tests/consumer` contains Gradle examples for dependency
 resolution, iOS C interop, and Android/JVM API calls.

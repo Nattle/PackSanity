@@ -6,6 +6,7 @@ import dev.nattle.packsanity.feature.packruntime.domain.LuaPackRuntime
 import kotlin.time.TimeSource
 import kotlinx.serialization.json.JsonElement
 
+/** A live pack session. Serialize access and close the session when it is replaced. */
 class LuaPackSession
 internal constructor(
     private val runtime: LuaPackRuntime,
@@ -14,7 +15,8 @@ internal constructor(
     private val logger: PopLogger = NoOpPopLogger,
 ) {
     private var appliedProviderCounts: Map<String, Int> = initialProviderCounts
-    internal var usesArchipelagoItemHandlers = false
+    /** Whether the pack's Archipelago callbacks own live provider counts. */
+    var usesArchipelagoItemHandlers = false
         private set
 
     private var archipelagoEventBatchActive = false
@@ -31,7 +33,8 @@ internal constructor(
             .filterTo(mutableSetOf(), String::isNotEmpty)
     }
 
-    internal fun <T> withRefresh(block: () -> T): T {
+    /** Runs one non-nested refresh within a shared Lua instruction budget. */
+    fun <T> withRefresh(block: () -> T): T {
         runtime.beginRefresh(1_000_000_000L)
         try {
             return block()
@@ -221,14 +224,15 @@ internal constructor(
             }
             .toMap()
 
-    /**
-     * Mirrors parsed location-rule accessibility onto the corresponding Lua location objects. Some
-     * packs use `Tracker:FindObjectForCode(...).AccessibilityLevel` from an access function to
-     * build a summary marker from its detailed-map checks.
-     */
     private var stagedLocationChanges: MutableSet<String>? = null
 
-    internal fun <T> stageLocationAccessibility(
+    /**
+     * Stages writes to the supplied canonical section [ids] while [block] computes accessibility.
+     * Publishes notifications for net changes after the block completes and returns the result and
+     * notification count. Callbacks can change pack state, so the caller may need another pass.
+     * [beforeNativeCall] and [beforeNotify] let the caller account for the work in its own budget.
+     */
+    fun <T> stageLocationAccessibility(
         ids: Set<String>,
         beforeNativeCall: () -> Unit = {},
         beforeNotify: () -> Unit = {},
@@ -258,6 +262,7 @@ internal constructor(
         return result to notified
     }
 
+    /** Mirrors parsed location-rule accessibility onto the corresponding Lua objects. */
     fun setLocationAccessibility(values: Map<String, Int>, beforeNativeCall: () -> Unit = {}) {
         if (values.isEmpty()) return
         val encoded =
@@ -417,7 +422,8 @@ internal constructor(
         executeCallback("PackSanityDispatchClear(${slotData.toLuaValue()})", resetElapsed = true)
     }
 
-    internal fun beginArchipelagoItemTracking() {
+    /** Hands provider counts to pack callbacks when both clear and item handlers are registered. */
+    fun beginArchipelagoItemTracking() {
         if (
             usesArchipelagoItemHandlers ||
                 !runtime.callBoolean("PackSanityHasArchipelagoItemHandlers", "")
@@ -436,7 +442,12 @@ internal constructor(
         logger.debug("Using pack Archipelago item handlers for live provider counts")
     }
 
-    internal fun clearAndReplayArchipelagoProgress(
+    /**
+     * Applies [slotData] through the clear handler and replays the supplied [checkedLocations]. Set
+     * [replayItems] to replay previously delivered items in server index order. Use false when the
+     * caller is about to deliver a complete replacement item history.
+     */
+    fun clearAndReplayArchipelagoProgress(
         slotData: JsonElement,
         checkedLocations: Map<Long, String>,
         replayItems: Boolean,
@@ -654,7 +665,8 @@ internal fun decodeHintArgument(encoded: String): String? {
 class LuaRefreshProtectionException(message: String, cause: Throwable? = null) :
     IllegalStateException(message, cause)
 
-internal fun Throwable.rethrowRefreshProtection() {
+/** Rethrows an execution limit as a typed signal to stop the affected session. */
+fun Throwable.rethrowRefreshProtection() {
     if (this is LuaRefreshProtectionException) throw this
     val limit =
         listOf("Lua refresh instruction limit exceeded", "Lua instruction limit exceeded")

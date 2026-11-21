@@ -1,5 +1,5 @@
 plugins {
-    kotlin("multiplatform") 
+    kotlin("multiplatform")
 }
 kotlin {
     jvm()
@@ -18,4 +18,5 @@ tasks.register<JavaExec>("runSmoke") {
     classpath(jvm.output.allOutputs, jvm.runtimeDependencyFiles)
     mainClass.set("JvmSmokeKt")
     environment("PACKSANITY_NATIVE_DIR", providers.gradleProperty("packsanityNativeDir").get())
+    args(providers.gradleProperty("packsanityFixtureDir").get())
 }

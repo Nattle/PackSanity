@@ -42,7 +42,7 @@ CPython by source URL and SHA-256; approved Python dependencies by locked versio
 fetches those sources into `build/python/inputs`; staging copies their license notices into the
 payload. No real external pack archives or proprietary game data are checked into this repo.
 
-## PackSanity 0.3 refresh
+## PackSanity runtime refresh
 
 `parityReferenceCommit` records the Waystone reference
 `27e6a09e2060444e0209663d55afc9aa4f785d58`. The original extraction commit remains the
