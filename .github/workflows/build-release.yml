@@ -1,6 +1,10 @@
 name: Build PackSanity release candidate
 
 on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-[0-9a-zA-Z]*'
   workflow_dispatch:
     inputs:
       version:
@@ -11,11 +15,12 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+
 jobs:
   mobile:
     runs-on: macos-15
-    env:
-      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -37,7 +42,7 @@ jobs:
           python="$(python python/tools/prepare_runtime.py)"
           PACKSANITY_TEST_JAVA_HOME="$JAVA_HOME" "$python" -m unittest discover -s python/src/test/python
           "$python" tests/test_integration.py
-      - run: python tools/build_release.py --version "$RELEASE_VERSION"
+      - run: python tools/build_release.py --version "${RELEASE_VERSION#v}"
       - run: python tools/verify_release.py build/release/dist
       - uses: actions/upload-artifact@v4
         with:
@@ -47,8 +52,6 @@ jobs:
 
   linux-host:
     runs-on: ubuntu-24.04
-    env:
-      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -59,7 +62,7 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install meson ninja
-      - run: python tools/build_release.py --version "$RELEASE_VERSION" --host-only
+      - run: python tools/build_release.py --version "${RELEASE_VERSION#v}" --host-only
       - uses: actions/upload-artifact@v4
         with:
           name: packsanity-linux-host

@@ -32,10 +32,14 @@ all platforms. Extract the Maven bundle and configure it as a repository for
 
 ## Build and verify
 
-The release workflow builds the bundles in CI. A full build from source requires macOS
-with Xcode, JDK 21, Meson, Ninja, Python 3 with pip, and
+Pushing a version tag such as `v0.1.2` starts the release build in CI. The workflow
+also accepts manual runs with an explicit version. Download the completed bundles
+from the workflow run and attach them to a GitHub Release for the matching tag.
+[Release workflow](../.github/workflows/build-release.yml)
+
+A full build from source requires macOS with Xcode, JDK 21, Meson, Ninja, Python 3 with pip, and
 Android SDK 37 with build tools 37.0.0, NDK 27.3.13750724, and CMake 3.22.1.
-The verifier requires Python 3.12 or newer. [Release workflow](../.github/workflows/build-release.yml)
+The verifier requires Python 3.12 or newer.
 
 ```sh
 export ANDROID_HOME=/path/to/android/sdk
@@ -46,4 +50,4 @@ python3 tools/verify_release.py build/release/dist
 The verifier checks hashes and uses the artifacts in a temporary consumer project.
 Pass `--android-device SERIAL` or `--ios-simulator UUID` to run the matching native
 runtime smoke check. Use `build_release.py --host-only` for just the host Lua bundle.
-Publish the assets and their manifests together under the matching version tag.
+Include both manifests in the release. Upload the Linux host manifest as `manifest-linux.json`.
