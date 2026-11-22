@@ -2,7 +2,7 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ "$#" -eq 0 ]; then
-    echo "usage: $0 WORLD.apworld [--game NAME] [--slot-data JSON] [--yaml YAML] [--fixture JSON] [--json]" >&2
+    echo "usage: $0 <WORLD.apworld | WORLD_DIRECTORY> [--game NAME] [--slot-data JSON] [--yaml YAML] [--fixture JSON] [--json]" >&2
     exit 2
 fi
 bootstrap_python=${PACKSANITY_PYTHON:-python3}

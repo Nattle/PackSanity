@@ -56,7 +56,10 @@ Run the same pack command against the ZIP you plan to ship. The loader checks th
 ### APWorld
 
 > `./test-world.sh /path/to/world.apworld --slot-data /path/to/slot-data.json`
+> `./test-world.sh /path/to/dev-folder --slot-data /path/to/slot-data.json` where you have `__init__.py` for your pack. 
 
+
+Pass a `.apworld` archive or the source package directory containing `__init__.py`.
 Pass the seed's slot data and add `--yaml /path/to/player.yaml` when the world needs the original player options.
 
 - Checks the package structure and validates any declared runtime compatibility versions.

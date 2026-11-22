@@ -36,7 +36,7 @@ pack-check:
 	./test-pack.sh "$(PACK)" $(PACK_CHECK_ARGS)
 
 world-check:
-	@test -n "$(WORLD)" || { echo "usage: make world-check WORLD=<world.apworld>" >&2; exit 2; }
+	@test -n "$(WORLD)" || { echo "usage: make world-check WORLD=<world.apworld or package directory>" >&2; exit 2; }
 	./test-world.sh "$(WORLD)" $(WORLD_CHECK_ARGS)
 
 python-native:
@@ -54,6 +54,6 @@ help:
 	@echo "make test                    Build and run native regressions"
 	@echo "make python-native           Build the C bridge against local pinned CPython"
 	@echo "make pack-check PACK=<pack>   Run the full PopTracker loading integration"
-	@echo "make world-check WORLD=<world.apworld>   Reconstruct an APWorld"
+	@echo "make world-check WORLD=<archive-or-directory>   Reconstruct an APWorld"
 	@echo "Pass scenario flags in PACK_CHECK_ARGS or WORLD_CHECK_ARGS."
 	@echo "See docs/testing.md for --fixture, --json, --strict and state formats."

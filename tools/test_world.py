@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Real APWorld import, fake generation and update checks using the owned staged adapter."""
 import argparse
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 import hashlib
 import json
 from pathlib import Path
+import stat
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,20 +33,34 @@ def quiet(call, *args, **kwargs):
         return call(*args, **kwargs)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("world", type=Path)
-    parser.add_argument("--game")
-    parser.add_argument("--slot-data", type=Path)
-    parser.add_argument("--yaml", type=Path)
-    parser.add_argument("--external-pack", type=Path)
-    parser.add_argument("--fixture", type=Path, help="JSON full server-state updates and expected output")
-    parser.add_argument("--slot", type=int, default=1)
-    parser.add_argument("--slot-name", default="PackSanity")
-    parser.add_argument("--json", action="store_true")
-    args = parser.parse_args()
-    try:
-        world = args.world.resolve()
+def archive_world_directory(source: Path, destination: Path) -> Path:
+    if not (source / "__init__.py").is_file():
+        raise ValueError(f"APWorld package directory must contain __init__.py: {source}")
+    package_root = source.name.lower()
+    world = destination / f"{package_root}.apworld"
+    with zipfile.ZipFile(world, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
+        pending = [source]
+        while pending:
+            for entry in sorted(pending.pop().iterdir()):
+                if entry == destination or entry.name in {".git", "__pycache__"}:
+                    continue
+                mode = entry.lstat().st_mode
+                if stat.S_ISLNK(mode):
+                    raise ValueError(f"APWorld package directory contains a symbolic link: {entry}")
+                if stat.S_ISDIR(mode):
+                    pending.append(entry)
+                elif not stat.S_ISREG(mode):
+                    raise ValueError(f"APWorld package directory contains a special file: {entry}")
+                archive.write(entry, f"{package_root}/{entry.relative_to(source).as_posix()}")
+    return world
+
+
+def check_world(args, source: Path):
+    with ExitStack() as cleanup:
+        world = source
+        if source.is_dir():
+            destination = Path(cleanup.enter_context(TemporaryDirectory(prefix="packsanity-world-"))).resolve()
+            world = archive_world_directory(source, destination)
         gate = subprocess.run([str(ROOT / "cli/build/install/cli/bin/cli"), "inspect-world", str(world)],
                               text=True, capture_output=True, timeout=30)
         if gate.returncode:
@@ -53,6 +69,7 @@ def main():
         sys.path.insert(0, str(ROOT / "build/python/payload"))
         from packsanity_ut_adapter import MobileUniversalTracker
         tracker = MobileUniversalTracker()
+        cleanup.callback(tracker.close)
         metadata = quiet(tracker.load_world, str(world), inspected["root"])
         game = args.game
         if game is None:
@@ -77,7 +94,7 @@ def main():
                                     stored_data=state.get("stored_data", {}), slot_data=state.get("slot_data"))
             snapshots.append(result)
             expect(result, update.get("expect", {}))
-        report = {"status": "passed", "world": str(world), "sha256": hashlib.sha256(world.read_bytes()).hexdigest(),
+        report = {"status": "passed", "world": str(source), "sha256": hashlib.sha256(world.read_bytes()).hexdigest(),
                   "metadata": metadata, "locations": len(result["locations"]), "regions": len(result["regions"]),
                   "inventory": len(result["inventory"]), "maps": len((result.get("map") or {}).get("maps", [])),
                   "state": result, "updates": len(updates)}
@@ -103,13 +120,28 @@ def main():
                 for marker in map_state.get("player_markers", []):
                     validate_image(marker.get("icon_path"))
         expect(report, fixture.get("expect", {}), "report")
-        tracker.close()
         print(json.dumps(report, indent=2) if args.json else
               f"PASS {game} locations={report['locations']} regions={report['regions']} maps={report['maps']} updates={len(updates)}")
-        return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("world", type=Path, help=".apworld archive or package directory containing __init__.py")
+    parser.add_argument("--game")
+    parser.add_argument("--slot-data", type=Path)
+    parser.add_argument("--yaml", type=Path)
+    parser.add_argument("--external-pack", type=Path)
+    parser.add_argument("--fixture", type=Path, help="JSON full server-state updates and expected output")
+    parser.add_argument("--slot", type=int, default=1)
+    parser.add_argument("--slot-name", default="PackSanity")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    try:
+        check_world(args, args.world.resolve())
     except Exception as error:
         print(f"FAIL {str(error) or type(error).__name__}", file=sys.stderr)
         return 1
+    return 0
 
 
 if __name__ == "__main__":

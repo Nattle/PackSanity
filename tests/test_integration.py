@@ -114,12 +114,19 @@ class LoadingIntegrationTest(unittest.TestCase):
 
     def test_apworld_invalid_container_fails_before_import(self):
         bad = Path(self.temp.name)/'broken.apworld'
+        source = Path(self.temp.name)/'broken'
+        source.mkdir()
+        (source/'__init__.py').write_text('raise RuntimeError("IMPORT SHOULD NOT HAPPEN")')
+        (source/'archipelago.json').write_text(json.dumps({'game':'Broken','version':999,'compatible_version':999}))
         with zipfile.ZipFile(bad,'w') as archive:
-            archive.writestr('broken/__init__.py','raise RuntimeError("IMPORT SHOULD NOT HAPPEN")')
-            archive.writestr('broken/archipelago.json',json.dumps({'game':'Broken','version':999,'compatible_version':999}))
-        result = self.run_world(world=bad)
-        self.assertNotEqual(result.returncode,0)
-        self.assertNotIn('IMPORT SHOULD NOT HAPPEN',result.stderr)
+            for entry in source.iterdir():
+                archive.write(entry, f'broken/{entry.name}')
+        for world in (bad, source):
+            with self.subTest(world=world):
+                result = self.run_world(world=world)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('UNSUPPORTED_APWORLD_CONTAINER',result.stderr)
+                self.assertNotIn('IMPORT SHOULD NOT HAPPEN',result.stderr)
 
     def test_directory_symlinks_are_rejected(self):
         pack = Path(self.temp.name)/'symlink-pack'
@@ -256,6 +263,22 @@ class LoadingIntegrationTest(unittest.TestCase):
         map = json.loads(result.stdout)['state']['map']['maps'][0]
         self.assertEqual(map['image_path'],'mapped_world/tracker/hall.png')
         self.assertEqual(map['locations'][0]['location_id'],2001)
+
+    def test_apworld_directory_reconstructs_maps_and_replays_state(self):
+        world, _ = self.make_mapped_world(uppercase=True)
+        parent = Path(self.temp.name) / 'world source'
+        with zipfile.ZipFile(world) as archive:
+            archive.extractall(parent)
+        source = parent / world.stem
+        fixture = ROOT / 'tests/scenarios/example-world.json'
+        result = self.run_world('--fixture', str(fixture), '--json', world=source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report['world'], str(source.resolve()))
+        self.assertEqual(report['updates'], 1)
+        world_map = report['state']['map']['maps'][0]
+        self.assertEqual(world_map['image_path'], 'mapped_world/tracker/hall.png')
+        self.assertEqual(world_map['locations'][0]['location_id'], 2001)
 
     def test_required_yaml_reconstructs_when_provided(self):
         world = Path(self.temp.name)/'yaml_world.apworld'

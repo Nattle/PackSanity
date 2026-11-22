@@ -46,10 +46,16 @@ and `missingImages`. Provider counts are queried for codes listed in
 ```sh
 ./test-world.sh /path/to/world.apworld --slot-data /path/to/slot-data.json \
   --yaml /path/to/player.yaml --fixture /path/to/scenario.json --json
+./test-world.sh /path/to/my_world --slot-data /path/to/slot-data.json
 ```
 
-Use a `.apworld` archive with a package root matching the filename stem. Pass the
-seed's raw Connected packet `slot_data` object to `--slot-data` and the original player
+Use a `.apworld` archive with a package root matching the filename stem, or pass the
+source package directory containing `__init__.py`. The checker stages directory inputs
+as temporary APWorld archives with the lowercase folder name as the package root. It skips
+`.git` and `__pycache__` entries and rejects symbolic links inside the package. In JSON
+output, `world` identifies the source directory and `sha256` hashes the temporary archive.
+
+Pass the seed's raw Connected packet `slot_data` object to `--slot-data` and the original player
 YAML to `--yaml` when required. Use `--game NAME` for archives that register multiple
 games, `--slot N` and `--slot-name NAME` to select player identity, and
 `--external-pack FILE` to supply a companion PopTracker map ZIP. The default slot is
