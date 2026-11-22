@@ -14,8 +14,7 @@ to tests. Preserve the public PopTracker APIs, APWorld gates, standard PopTracke
 - `python/runtime.lock.json`: source/core/dependency selection. Preserve notices when staging.
 - `test-pack.sh`, `test-world.sh`: developer-facing integrations; no silently skipped failures.
 
-Use docs/provenance.md and extraction-manifest.json to compare against the extraction revision.
-This repo is standalone. Do not use external apps as a build/test dependency or import its test helpers.
+This repo is standalone. Do not use external apps or their test helpers as build or test dependencies.
 Changes must be original or properly attributed/licensed. Maintain THIRD_PARTY_NOTICES.md and source
 licenses. Never distribute another author's real pack fixture without permission.
 

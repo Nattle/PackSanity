@@ -1,144 +1,94 @@
 # PackSanity
 
-PackSanity owns a standalone extraction of Waystone's PopTracker pack and Universal Tracker
-APWorld loading layer. It contains the registration-driven Kotlin parser/models, bounded native
-Lua 5.4.9 host, tracker-only Python reconstruction adapter, and developer integration commands.
-No application checkout, UI, Android SDK, catalog, or Archipelago server is needed.
+PackSanity is a standalone library for loading PopTracker packs and reconstructing Universal Tracker APWorlds. It could be used to embed the tracker runtime in a Kotlin, C application, or use the command-line tools to verify an archive. Applications supply networking, storage, and UI.
 
-## How PackSanity works
+## Build from source
 
-```mermaid
-flowchart TB
-    subgraph PopTracker["PopTracker packs"]
-        Pack["Pack ZIP or directory"] --> LuaLoader["Kotlin pack loader<br/>Reads the manifest<br/>Parses registered files"]
-        LuaSource["Vendored Lua source"] -. compiled into .-> LuaRuntime["Bounded Lua runtime<br/>Provides PopTracker APIs"]
-        LuaLoader <-->|"Scripts and file registrations"| LuaRuntime
-        LuaLoader --> PackState["Items, maps, checks, and a live Lua session"]
-    end
+Install a full JDK 21, a C compiler, Python 3, Meson 1.3+, and Ninja. Set `JAVA_HOME` to the JDK installation and make `meson`, `ninja`, and `python3` available on your `PATH`.
 
-    subgraph UniversalTracker["Universal Tracker worlds"]
-        World["APWorld archive"] --> WorldGate["Kotlin APWorld inspector<br/>Checks structure and versions"]
-        CPythonSource["Pinned CPython source"] -. compiled into .-> PythonRuntime["CPython runtime"]
-        APCore["Pinned Archipelago core"] -. staged with .-> PythonAdapter
-        WorldGate --> PythonAdapter["Python tracker adapter<br/>Rebuilds world logic<br/>Replays server state"]
-        PythonRuntime -->|Runs| PythonAdapter
-        ServerState["Slot data, optional YAML,<br/>and server updates"] --> PythonAdapter
-        PythonAdapter --> WorldState["Reachability, inventory, checks, and maps"]
-    end
+### Local libraries and CLI
 
-    PackState --> Consumer["Waystone, other apps, and CLI checks"]
-    WorldState --> Consumer
-```
-
-## Try a pack or world
+Install Make, then run these commands from the repository root.
 
 ```sh
-./test-pack.sh /path/to/development-pack.zip
-./test-pack.sh /path/to/pack-directory --all-variants --json
-./test-pack.sh /path/to/pack.zip --variant standard --fixture tests/scenarios/example-pack.json
-
-./test-world.sh /path/to/development_world.apworld --slot-data /path/to/slot-data.json
-./test-world.sh /path/to/world.apworld --yaml /path/to/player.yaml --fixture /path/to/scenario.json --json
+./gradlew :loader:assemble :cli:installDist
+make build
 ```
 
-A pack check parses the manifest, executes Lua in a disposable discovery session, parses **exactly
-the files the chosen variant registers**, then initializes a fresh native session. It runs frame
-handlers, checks callback errors and highlight target identities, reparses callback-driven
-registrations, and reports items, maps, sections, location-ID mappings, unresolved references and
-diagnostics. Scenario fixtures can replay Archipelago callbacks and assert provider counts, hint
-highlights, location mappings and other loading results. `--strict` makes diagnostic/reference/
-image problems fail a development check. Both ZIP and unpacked directory development packs work.
+Gradle builds the Kotlin JVM loader and CLI. Make runs Meson to build the C Lua host in `build/meson`.
 
-A world check runs the Kotlin APWorld structural/version gate, imports the selected archive into
-an isolated Python process, then runs the actual tracker-only fake-generation stages and state
-updates. Use real server `slot_data` and the original YAML when required by that world's hooks;
-an empty object cannot reconstruct every game/seed. Missing YAML, dependencies, incompatible
-versions and failed reconstruction are failures, not skips. Multi-game archives require `--game`.
-`--external-pack PATH` attaches a companion PopTracker map ZIP. The checker verifies returned map
-image paths against the actual archive. It does not run desktop UT, fill a seed, or connect to AP.
+- **Lua JNI.** To include JNI, run `make build MESON_ARGS=-Djni=true`. Point `PACKSANITY_NATIVE_DIR` at `build/meson` when running a JVM consumer.
+- **CPython bridge.** Install Git and Python 3 with pip, then run `make python-native` to build the optional bridge in `build/python-native-meson`. This prepares the pinned CPython and Archipelago runtime. Set `PACKSANITY_PYTHON` to select the bootstrap interpreter for this build or the APWorld checker. [Runtime pins](python/runtime.lock.json)
 
-See [verified extraction checks](docs/verification.md) and [testing and scenarios](docs/testing.md) for input formats, examples, pass criteria and limits.
-A passing load is integration evidence, not a certification of every gameplay rule or every seed.
-APWorlds execute Python code: test archives you trust, in a disposable environment for outside
-submissions. Python process/import isolation is not a filesystem/network sandbox. Lua has a
-bounded memory/instruction sandbox with only read-only registered pack files.
+For Android and iOS bundles, follow the [release build instructions](docs/releasing.md#build-and-verify).
 
-## Setup and regression tests
+### Pack checker
 
-Use a full JDK 21, a C compiler, Make, Meson 1.3+, Ninja, Git, and a bootstrap Python 3
-with pip. Pack checks compile the vendored Lua 5.4.9 sources locally. World checks fetch
-and verify AP 0.6.8 and CPython 3.13.15 and stage the locked pure-Python dependencies in
-`build/python/`. The first world check also compiles CPython into `build/python/host/`.
-Later runs reuse that build. The APWorld command executes that interpreter in isolated mode.
-`PACKSANITY_PYTHON` selects the bootstrap Python used for fetching and staging.
-On macOS the build picks up Homebrew's OpenSSL 3 when available. Set `PACKSANITY_OPENSSL`
-to the prefix of a compatible OpenSSL install to override detection.
-See [runtime.lock.json](python/runtime.lock.json) for the source pins.
+Once the required tools are installed, the bundled smoke test can be your first command.
+
+```sh
+./test-pack.sh tests/fixtures/minimal --strict
+```
+
+`test-pack.sh` builds the CLI with Gradle and the Lua JNI library with Meson in `build/native-meson` before checking the pack.
+
+## Verify an archive
+
+### PopTracker pack
+
+> `./test-pack.sh /path/to/pack.zip --all-variants --strict`
+
+Use a ZIP or an unpacked directory. Pass `--variant UID` in place of `--all-variants` to check one variant.
+
+- Reads `manifest.json`, runs Lua initialization, and parses the items, maps, locations, and layouts registered by the selected variant.
+- Runs frame handlers, reports callback errors, and checks that active highlights point to registered locations or sections.
+- With `--strict`, fails on parser diagnostics, unresolved section references, or missing map images.
+- With `--fixture`, replays events such as item receipts and hints. A scenario can assert item provider counts, Archipelago location mappings, and hint highlights.
+
+### Pack ZIP
+
+Run the same pack command against the ZIP you plan to ship. The loader checks the archive as it opens it.
+
+- Enforces limits on archive size, entry count, individual file size, and total expanded size.
+- Locates the manifest and registered files at the archive root or under a wrapper folder.
+- Ignores entries with unsafe paths, such as absolute paths or paths with a `..` segment.
+
+### APWorld
+
+> `./test-world.sh /path/to/world.apworld --slot-data /path/to/slot-data.json`
+
+Pass the seed's slot data and add `--yaml /path/to/player.yaml` when the world needs the original player options.
+
+- Checks the package structure and validates any declared runtime compatibility versions.
+- Imports the world and reconstructs its tracker graph from the seed inputs.
+- Checks that referenced map images and marker icons exist.
+- With `--fixture`, replays server state and can assert inventory, checks, and reachability.
+
+Both commands return nonzero on failure. Use `--json` for machine-readable reports. [Options and scenario formats](docs/testing.md)
+
+## Embed the library
+
+### Kotlin
+
+Add `dev.nattle.packsanity:loader:<version>` to your Gradle dependencies. For a local build, run `./gradlew :loader:publishToMavenLocal` and use `mavenLocal()`. The default source build targets JVM. Enable Android with `-PenableAndroid=true` or iOS arm64 device and simulator targets with `-PenableIos=true`. [Artifact setup for JVM, Android, and iOS](docs/releasing.md#use-the-artifacts)
+
+- **PopTracker packs.** Use `PackSanityPackParser` and `LuaTrackerPackageLoader` with a `PackageArchive` and a `LuaPackRuntimeFactory`. On JVM, use `NativeLuaPackRuntime`. Keep the Lua session open while applying updates and close it when finished.
+- **APWorlds.** Use `EmbeddedUniversalTrackerRuntime` with a `UniversalTrackerJsonRuntime` implementation, or call the Python `MobileUniversalTracker` adapter directly. Accumulate server packets into complete snapshots before passing them to the runtime.
+
+### C and C++
+
+Run `make install` to build and install the Lua host. Use `packsanity/lua_host.h` and the `packsanity-lua` pkg-config package. Run `make python-native` to build the optional CPython bridge exposed by `packsanity/python_host.h`. [Native build options](docs/testing.md#native-builds)
+
+Serialize native calls and use a new handle or process when switching APWorlds. [Supported APIs and limits](docs/compatibility-matrix.md)
+
+## Run regression tests
 
 ```sh
 ./gradlew spotlessApply :loader:jvmTest
 make test
-python=$(python3 python/tools/prepare_runtime.py)
-"$python" -m unittest discover -s python/src/test/python
-"$python" tests/test_integration.py
-make python-native
+runtime_python=$(python3 python/tools/prepare_runtime.py)
+"$runtime_python" -m unittest discover -s python/src/test/python
+"$runtime_python" tests/test_integration.py
 ```
 
-Meson builds PackSanity's native targets, CPython uses its upstream build, and Kotlin uses
-Gradle. Install Meson and Ninja with your package manager or with pip in a virtual environment.
-`make test` uses `build/meson` and `test-pack.sh` uses `build/native-meson` with JNI enabled.
-`make python-native` compiles the C bridge against the locally built CPython in
-`build/python-native-meson`.
-These paths avoid reusing obsolete native build caches. Configure options include `-Djni=true`,
-`-Dpython_bridge=true`, `-Dpython=/path/to/python3.13`, `-Dtests=false` and
-`-Ddefault_library=shared`. Both optional bridges default off. JNI requires a full JDK in
-`JAVA_HOME`. `make` accepts `BUILD_DIR`, `MESON`, `MESON_ARGS`, `MESON_BUILD_ARGS` and
-`INSTALL_ARGS`; for example `make test MESON_ARGS='-Ddefault_library=shared'`.
-
-`test-pack.sh` and `test-world.sh` return nonzero for failed loads/assertions. Build progress and
-pack log output go to stderr; `--json` stdout is machine-readable. Run either command from any
-working directory, including a path containing spaces. Local development archives stay outside
-Git. The synthetic fixtures and regression suite live here and use only local test helpers.
-
-## Library boundary
-
-- `loader/`: a Kotlin Multiplatform library containing archive contracts/safety, JSONC parsing,
-  pack models/rules, dynamic Lua registration/session loading, APWorld inspection, and the typed
-  JSON runtime contract. The default artifact is JVM; `-PenableIos=true` enables arm64 iOS and
-  simulator library targets. It has no Compose, Koin, Ktor or Android dependency.
-- `native/`: public `packsanity/lua_host.h` and `packsanity/python_host.h` C ABIs, Lua sources,
-  JNI adapter, and the shared CPython host. Networking, application persistence and UI belong to
-  consumers. Native APIs expose values/JSON and owned strings, not interpreter objects.
-- `lua/poptracker_host/`: ordered host fragments compiled into the Kotlin artifact as one chunk.
-  `lua/host.lua` retains a plain bootstrap for C consumers and host conformance tests
-  with epoch 0; Kotlin sessions substitute the current epoch into the same fragment source.
-- `python/src/main/`: owned reconstruction/source adapters and narrowly scoped runtime templates.
-  `python/tools/`: lock/bootstrap/staging support independent of platform app builds.
-- `cli/` and `tools/`: integration clients of the library, not alternate pack implementations.
-
-Use `./gradlew :loader:publishToMavenLocal` for a local Kotlin consumer, then add
-`implementation("dev.nattle.packsanity:loader:0.1.1-SNAPSHOT")` with `mavenLocal()` enabled.
-Native consumers install with `meson install -C build/meson` and use pkg-config packages
-`packsanity-lua` and (when enabled) `packsanity-python`. Meson consumers use
-`dependency('packsanity-lua', static: true)` for the default static library. C and C++ headers expose
-opaque runtime handles. Create a
-`PackSanityPackParser` and `LuaTrackerPackageLoader`, supply a `PackageArchive` and
-`LuaPackRuntimeFactory`, and retain/close the returned session. JVM clients can use
-`NativeLuaPackRuntime`; mobile clients link the same C host through their platform adapter.
-APWorld clients use the typed `EmbeddedUniversalTrackerRuntime` with a
-`UniversalTrackerJsonRuntime`, or the Python `MobileUniversalTracker` API and C JSON bridge.
-Calls must be serialized. Each C handle owns a subinterpreter. Close that handle and create a new one to switch
-APWorld archives. The command-line Python runner uses a single world per process.
-
-PackSanity owns its library contract independently of consuming applications.
-[Extraction provenance](docs/provenance.md) and `extraction-manifest.json` record the source
-revision and extraction adjustments. Custom manifest keys use `min_packsanity_version`,
-`target_packsanity_version`, `min_packsanity_compatibility_level` and
-`target_packsanity_compatibility_level`. Legacy Waystone keys are accepted as fallbacks. PackSanity keys take precedence when both are present. Override archives are supplied by
-callers; PackSanity does not select an application-specific override filename.
-
-See [compatibility boundaries](docs/compatibility-matrix.md)
-and [third-party notices](THIRD_PARTY_NOTICES.md) before distributing a library or runtime bundle.
-
-See [building and consuming releases](docs/releasing.md) for the Maven and native bundles.
-The [Waystone migration plan](docs/waystone-migration.md) covers the downstream cutover.
+[Third-party notices](THIRD_PARTY_NOTICES.md)
