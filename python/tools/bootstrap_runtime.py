@@ -83,6 +83,16 @@ def main() -> None:
     if actual_commit != archipelago["commit"]:
         raise RuntimeError(f"Archipelago revision mismatch: expected {archipelago['commit']}, got {actual_commit}")
 
+    tracker = lock["universalTracker"]
+    tracker_archive = output / f"UniversalTracker-{tracker['version']}.apworld"
+    if not tracker_archive.is_file() or sha256(tracker_archive) != tracker["sha256"]:
+        with tempfile.TemporaryDirectory(dir=output) as temporary:
+            download = Path(temporary) / "tracker.apworld"
+            urllib.request.urlretrieve(tracker["sourceUrl"], download)
+            if sha256(download) != tracker["sha256"]:
+                raise RuntimeError("Universal Tracker release checksum does not match the runtime lock")
+            download.replace(tracker_archive)
+
     dependencies = lock["purePythonDependencies"]
     installed = {
         distribution.metadata["Name"].lower().replace("-", "_"): distribution.version

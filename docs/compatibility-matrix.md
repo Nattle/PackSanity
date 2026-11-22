@@ -36,4 +36,23 @@ Consumers supply any override archives.
 Consumers accumulate partial network packets. An explicit `missing_locations` list,
 including an empty list, makes the checked and missing IDs authoritative. A changed
 complete slot-data snapshot rebuilds the graph and replays state before publishing it.
+
+Map assets expose numbered check placements and separate graph markers for entrances and
+code-less events. Sections match graph names directly or use `poptracker_entrance_mapping`.
+Map-specific visibility lists apply to each marker kind. Graph markers report whether the
+entrance is reachable and connected, or the event's region and rule are reachable. World
+storage callbacks can change those states without changing server check membership.
+
+Reconstruction uses Universal Tracker's default deferred entrance mode. The APWorld
+chooses which entrances to defer and reconnects them through its declared storage
+keys and `reconnect_found_entrances` hook. Reachability uses that graph. The entrance
+pairing list depends on a supported seed-data pairing table.
+
+Player YAML supports merge keys and rejects duplicate keys within an explicit mapping.
+Archipelago verifies YAML location exclusions before generation and applies exclusions
+against the generated graph during reconstruction.
+
+APWorld dependency specifiers use PyPA's `packaging` implementation and are
+checked against the pinned runtime. Direct URLs and environment markers are rejected.
+
 [Scenarios for verifying a specific pack or seed](testing.md)

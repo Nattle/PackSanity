@@ -14,6 +14,7 @@ import zipfile
 import zipimport
 from worlds import AutoWorld
 from packsanity_ut_models import LOGGER, TrackerAdapterError
+from packsanity_ut_requirements import _read_requirements, _requirement_is_available
 
 
 def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
@@ -30,7 +31,7 @@ def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
         raise TrackerAdapterError(f"APWorld package does not exist: {path}")
     if not package_root or "/" in package_root or "\\" in package_root:
         raise TrackerAdapterError("APWorld package root is invalid.")
-    path = self._normalized_package_path(path, package_root)
+    path = _normalized_package_path(path, package_root)
     if self._loaded_package_root is not None:
         if self._loaded_package_root == package_root and self._loaded_package_path == path:
             # Closing a tracker session deliberately leaves CPython and the registered APWorld
@@ -53,8 +54,8 @@ def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
             "An APWorld is already loaded. Create a new interpreter before switching worlds."
         )
 
-    requirements = self._read_requirements(path)
-    unavailable = [requirement for requirement in requirements if not self._requirement_is_available(requirement)]
+    requirements = _read_requirements(path)
+    unavailable = [requirement for requirement in requirements if not _requirement_is_available(requirement)]
     if unavailable:
         raise TrackerAdapterError(
             "APWorld requires Python dependencies that are not bundled in this mobile runtime: "
@@ -64,16 +65,14 @@ def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
     module_name = f"worlds.{package_root}"
     try:
         importer = zipimport.zipimporter(str(path))
-        spec = importer.find_spec(package_root)
+        spec = importer.find_spec(module_name)
         if spec is None:
             raise TrackerAdapterError(
                 f"APWorld '{path.name}' does not expose package root '{package_root}'."
             )
         module = importlib.util.module_from_spec(spec)
-        module.__package__ = module_name
-        module.__name__ = module_name
         sys.modules[module_name] = module
-        with self._local_rule_builder_fallback(path, package_root):
+        with _local_rule_builder_fallback(path, package_root):
             importer.exec_module(module)
         _apply_world_manifest(path, package_root)
     except TrackerAdapterError:

@@ -2,11 +2,12 @@
 from __future__ import annotations
 import json
 import math
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, TYPE_CHECKING
 import zipfile
-from packsanity_ut_models import LOGGER, TrackerAdapterError, TrackerSession
+from packsanity_ut_models import LOGGER, TrackerAdapterError, TrackerSession, tracker_setting
 if TYPE_CHECKING:
+    from BaseClasses import CollectionState
     from worlds import AutoWorld
 
 
@@ -27,7 +28,9 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
         return None
 
     def setting(name: str, default: Any = None) -> Any:
-        return config.get(name, default) if isinstance(config, dict) else getattr(config, name, default)
+        return tracker_setting(config, name, default)
+
+    package_root = self._loaded_package_root
 
     external = bool(setting("external_pack_key"))
     folder = setting("map_page_folder")
@@ -45,15 +48,16 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
         return [entry for entry in value if isinstance(entry, str)] if isinstance(value, (list, tuple)) else []
 
     def read_json(relative: str) -> Any:
-        archive_path = self._map_asset_path(folder, relative, external)
+        archive_path = _map_asset_path(package_root, folder, relative, external)
         archive_path = archive_path.removeprefix("external-pack/") if external else archive_path
         with zipfile.ZipFile(session.external_pack_path if external else self._loaded_package_path) as archive:
             return json.loads(archive.read(archive_path))
 
     if session.map_assets is None:
         try:
-            maps = [entry for path in values("map_page_maps") for entry in self._json_list(read_json(path), "maps")]
-            location_nodes = [entry for path in values("map_page_locations") for entry in self._json_list(read_json(path), "locations")]
+            maps = [entry for path in values("map_page_maps") for entry in _json_list(read_json(path), "maps")
+                    if isinstance(entry, dict)]
+            location_nodes = [entry for path in values("map_page_locations") for entry in _json_list(read_json(path), "locations")]
         except (
             OSError, KeyError, UnicodeDecodeError, zipfile.BadZipFile,
             json.JSONDecodeError, TrackerAdapterError,
@@ -69,6 +73,7 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
             name_mapping = {}
         location_name_to_id = world.location_name_to_id
         locations_by_map: dict[str, list[dict[str, Any]]] = {str(entry.get("name", "")): [] for entry in maps}
+        sections_by_map = {name: [] for name in locations_by_map}
 
         def mapped_location_id(group_name: str, section_name: str) -> int | None:
             mapped = name_mapping.get(f"{group_name}/{section_name}", section_name)
@@ -84,11 +89,14 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
                 sections = node.get("sections", [])
                 map_locations = node.get("map_locations", [])
                 if isinstance(sections, list) and isinstance(map_locations, list):
+                    names = list(dict.fromkeys(
+                        section["name"] for section in sections
+                        if isinstance(section, dict) and isinstance(section.get("name"), str)
+                    ))
                     ids = {
                         location_id
-                        for section in sections
-                        if isinstance(section, dict) and isinstance(section.get("name"), str)
-                        for location_id in [mapped_location_id(group_name, section["name"])]
+                        for name in names
+                        for location_id in [mapped_location_id(group_name, name)]
                         if location_id is not None
                     }
                     for marker in map_locations:
@@ -99,11 +107,19 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
                             continue
                         try:
                             x, y = float(marker["x"]), float(marker["y"])
-                        except (KeyError, TypeError, ValueError):
+                        except (KeyError, TypeError, ValueError, OverflowError):
                             continue
+                        if not math.isfinite(x) or not math.isfinite(y):
+                            continue
+                        placement = {"x": x, "y": y}
+                        size = _positive_float(marker.get("size"), None)
+                        if size is not None:
+                            placement["size"] = size
                         locations_by_map[map_name].extend(
-                            {"location_id": location_id, "x": x, "y": y} for location_id in ids
+                            {"location_id": location_id, **placement} for location_id in ids
                         )
+                        if names:
+                            sections_by_map[map_name].append((placement, names))
                 children = node.get("children", [])
                 if isinstance(children, list):
                     visit(children)
@@ -111,36 +127,39 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
         visit(location_nodes)
         normalized_maps = []
         for index, entry in enumerate(maps):
-            if not isinstance(entry, dict):
-                continue
             map_id = str(entry.get("name", index))
             image = entry.get("img") or entry.get("image")
             if not isinstance(image, str):
                 continue
             try:
-                image_path = self._map_asset_path(folder, image, external)
+                image_path = _map_asset_path(package_root, folder, image, external)
             except TrackerAdapterError:
                 if not external:
                     raise
                 LOGGER.warning("Installed companion map pack has an invalid image path")
                 session.external_pack_path = None
                 return None
-            location_size = self._positive_float(entry.get("location_size"), 65.0)
-            normalized_maps.append(
-                {
-                    "id": map_id,
-                    "image_path": image_path,
-                    "locations": locations_by_map.get(map_id, []),
-                    "location_icon_size": self._positive_float(
-                        entry.get("location_icon_size"), location_size
-                    ),
-                }
-            )
+            location_size = _positive_float(entry.get("location_size"), None)
+            border = entry.get("location_border_thickness")
+            asset = {
+                "id": map_id,
+                "image_path": image_path,
+                "locations": locations_by_map.get(map_id, []),
+                "location_icon_size": _positive_float(
+                    entry.get("location_icon_size"), location_size or 65.0
+                ),
+            }
+            if location_size is not None:
+                asset["location_size"] = location_size
+            if isinstance(border, (int, float)) and 0 <= border < math.inf:
+                asset["location_border_thickness"] = border
+            normalized_maps.append(asset)
         if external and not normalized_maps:
             LOGGER.warning("Installed companion map pack declares no usable maps")
             session.external_pack_path = None
             return None
         session.map_assets = normalized_maps
+        session.map_sections = sections_by_map
         LOGGER.info("Loaded %s static Universal Tracker map assets", len(normalized_maps))
 
     normalized_maps = session.map_assets
@@ -169,7 +188,7 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
             stored_coords = session.stored_data[resolved_key]
             # Current Universal Tracker packs receive the active map index followed by
             # their stored coordinate object. Older packs accepted only coordinates.
-            parameter_count = self._callable_parameter_count(coordinate_function)
+            parameter_count = _callable_parameter_count(coordinate_function)
             coords_result = (
                 coordinate_function(active_map_index, stored_coords)
                 if parameter_count is None or parameter_count >= 2
@@ -180,7 +199,8 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
                 if active_map_index is not None and active_map_index < len(normalized_maps)
                 else 65.0
             )
-            player_markers = self._normalize_player_markers(
+            player_markers = _normalize_player_markers(
+                package_root,
                 folder,
                 active_map_id,
                 marker_size,
@@ -195,8 +215,80 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
     }
 
 
+def _update_graph_markers(
+    world: AutoWorld.World, session: TrackerSession, state: CollectionState,
+    map_state: dict[str, Any] | None,
+) -> None:
+    """Resolve map-only sections with live UT entrance and event semantics."""
+    if map_state is None or not session.map_sections:
+        return
+    aliases = tracker_setting(world.tracker_world, "poptracker_entrance_mapping")
+    if not isinstance(aliases, dict):
+        aliases = {}
+    entrances = {entry.name: entry for entry in session.multiworld.get_entrances(session.player)}
+    events = {
+        entry.name: entry for entry in session.multiworld.get_locations(session.player)
+        if entry.address is None and entry.parent_region is not None
+    }
+    hidden_entrances = getattr(world, "ut_map_page_hidden_entrances", {}) or {}
+    hidden_events = getattr(world, "ut_map_page_hidden_events", {}) or {}
+    hidden_checks = getattr(world, "ut_map_page_hidden_locations", {}) or {}
+    entrance_status = {}
+    event_status = {}
+
+    def status(reachable, complete):
+        return "complete" if reachable and complete else "available" if reachable else "blocked"
+
+    maps = []
+    for asset in map_state["maps"]:
+        map_id = asset["id"]
+        hidden_entrance_names = set(hidden_entrances.get(map_id, ()))
+        hidden_event_names = set(hidden_events.get(map_id, ()))
+        hidden_check_ids = set(hidden_checks.get(map_id, ()))
+        pins = {}
+        for placement, names in session.map_sections.get(map_id, ()):
+            for name in names:
+                alias = aliases.get(name)
+                entrance_names = (name, alias) if isinstance(alias, str) and alias != name else (name,)
+                for entrance_name in entrance_names:
+                    if entrance_name in hidden_entrance_names:
+                        continue
+                    entrance = entrances.get(entrance_name)
+                    if entrance is None:
+                        continue
+                    if entrance_name not in entrance_status:
+                        entrance_status[entrance_name] = status(
+                            entrance.can_reach(state), entrance.connected_region is not None
+                        )
+                    entry = {"id": entrance_name, "name": name, "status": entrance_status[entrance_name]}
+                    key = ("entrance", placement["x"], placement["y"])
+                    pins.setdefault(key, {**placement, "kind": "entrance", "entries": {}})["entries"][entrance_name] = entry
+                event = events.get(name)
+                if event is not None and name not in hidden_event_names:
+                    if name not in event_status:
+                        reachable = event.parent_region.can_reach(state)
+                        event_status[name] = status(reachable, reachable and event.can_reach(state))
+                    entry = {"id": name, "name": name, "status": event_status[name]}
+                    key = ("event", placement["x"], placement["y"])
+                    pins.setdefault(key, {**placement, "kind": "event", "entries": {}})["entries"][name] = entry
+        markers = [{**pin, "entries": list(pin["entries"].values())} for pin in pins.values()]
+        updated = dict(asset)
+        if markers:
+            updated["graph_markers"] = markers
+        if hidden_check_ids:
+            updated["locations"] = [
+                placement for placement in asset["locations"] if placement["location_id"] not in hidden_check_ids
+            ]
+        maps.append(updated)
+    # Keep earlier snapshots intact and reuse the resolved pins on position-only updates.
+    map_state["maps"] = maps
+    LOGGER.debug("Resolved %s Universal Tracker graph markers", sum(
+        len(asset.get("graph_markers", ())) for asset in maps
+    ))
+
+
 def _normalize_player_markers(
-    self,
+    package_root: str,
     folder: str,
     active_map_id: str | None,
     marker_size: float,
@@ -222,7 +314,7 @@ def _normalize_player_markers(
             continue
         icon_path = None
         if len(raw_marker) >= 3 and isinstance(raw_marker[2], str) and raw_marker[2]:
-            icon_path = self._map_asset_path(folder, raw_marker[2], external)
+            icon_path = _map_asset_path(package_root, folder, raw_marker[2], external)
         markers.append(
             {
                 "x": x,
@@ -235,28 +327,20 @@ def _normalize_player_markers(
     return markers
 
 
-def _internal_asset_path(self, folder: str, relative: str) -> str:
-    parts = [self._loaded_package_root, folder.strip("/"), relative.lstrip("/")]
-    path = Path(*[part for part in parts if part]).as_posix()
-    if any(part == ".." for part in Path(path).parts):
-        raise TrackerAdapterError(f"Universal Tracker map asset path escapes its package: {relative}")
-    return path
+def _map_asset_path(package_root: str, folder: str, relative: str, external: bool) -> str:
+    root = PurePosixPath("external-pack") if external else PurePosixPath(package_root, folder.strip("/"))
+    path = root / relative.lstrip("/")
+    if ".." in path.parts or (external and path == root):
+        kind = "External" if external else "Universal Tracker"
+        raise TrackerAdapterError(f"{kind} map asset path escapes its package: {relative}")
+    return path.as_posix()
 
 
-def _map_asset_path(self, folder: str, relative: str, external: bool) -> str:
-    if external:
-        path = Path(relative.lstrip("/")).as_posix()
-        if not path or any(part in ("..", ".") for part in Path(path).parts):
-            raise TrackerAdapterError(f"External map asset path escapes its package: {relative}")
-        return f"external-pack/{path}"
-    return self._internal_asset_path(folder, relative)
-
-
-def _positive_float(value: Any, default: float) -> float:
+def _positive_float(value: Any, default: float | None) -> float | None:
     try:
         parsed = float(value)
         return parsed if parsed > 0 and math.isfinite(parsed) else default
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 

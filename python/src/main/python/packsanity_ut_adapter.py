@@ -4,16 +4,16 @@ The native host owns networking. Responsibility modules provide package loading,
 maps, entrances, and cache projections; this facade retains session ownership and bridge APIs.
 """
 from __future__ import annotations
-from collections import Counter
 from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any
 import zipfile
-from BaseClasses import CollectionState, ItemClassification, LocationProgressType
+from BaseClasses import LocationProgressType
+from NetUtils import NetworkItem
 from worlds import AutoWorld
-from packsanity_ut_models import LOGGER, TrackerAdapterError, TrackerSession
-import packsanity_ut_requirements as requirements
+from packsanity_ut_core import replay_inventory
+from packsanity_ut_models import LOGGER, TrackerAdapterError, TrackerSession, tracker_setting
 import packsanity_ut_packages as packages
 import packsanity_ut_maps as maps
 import packsanity_ut_entrances as entrances
@@ -24,35 +24,15 @@ import packsanity_ut_logic as logic
 class MobileUniversalTracker:
     """Retain one serialized tracker per process/world; changing archives needs a new interpreter."""
 
-    # Delegates preserve the facade's method contract; all mutable session state stays here.
-    _read_requirements = staticmethod(requirements._read_requirements)
-    _requirement_is_available = staticmethod(requirements._requirement_is_available)
-    _version_satisfies = staticmethod(requirements._version_satisfies)
-    _version_parts = staticmethod(requirements._version_parts)
     load_world = packages.load_world
-    _local_rule_builder_fallback = staticmethod(packages._local_rule_builder_fallback)
-    _normalized_package_path = staticmethod(packages._normalized_package_path)
     verify_tracker_package = staticmethod(packages.verify_tracker_package)
-    _callable_parameter_count = staticmethod(maps._callable_parameter_count)
     _map_state = maps._map_state
-    _normalize_player_markers = maps._normalize_player_markers
-    _internal_asset_path = maps._internal_asset_path
-    _map_asset_path = maps._map_asset_path
-    _positive_float = staticmethod(maps._positive_float)
-    _json_list = staticmethod(maps._json_list)
     _entrance_payload = staticmethod(entrances._entrance_payload)
-    _resolved_entrance_keys = staticmethod(entrances._resolved_entrance_keys)
-    _server_entrance_pairings = staticmethod(entrances._server_entrance_pairings)
-    _entrance_discovery = staticmethod(entrances._entrance_discovery)
-    _entrance_storage_key_by_source = staticmethod(entrances._entrance_storage_key_by_source)
-    _apply_stored_data = entrances._apply_stored_data
-    _static_class_attribute = staticmethod(reconstruction._static_class_attribute)
+    _apply_stored_data = staticmethod(entrances._apply_stored_data)
     _build_multiworld = reconstruction._build_multiworld
     _options_namespace = reconstruction._options_namespace
     _load_yaml_options = reconstruction._load_yaml_options
-    _inventory_payload = staticmethod(logic._inventory_payload)
     _logic_signature = staticmethod(logic._logic_signature)
-    _stored_data_keys = staticmethod(logic._stored_data_keys)
 
     def __init__(self) -> None:
         self._session: TrackerSession | None = None
@@ -111,10 +91,9 @@ class MobileUniversalTracker:
         server_slot_data = deepcopy(slot_data)
         slot_data = deepcopy(slot_data)
 
-        def build_session(regen_data, deferred_connections="off"):
+        def build_session(regen_data):
             options = deepcopy(yaml_options or {})
-            kwargs = {"deferred_connections": deferred_connections} if deferred_connections != "off" else {}
-            multiworld = self._build_multiworld(game, slot_name, options, regen_data, **kwargs)
+            multiworld = self._build_multiworld(game, slot_name, options, regen_data)
             return TrackerSession(
                 game, slot, slot_name, team, server_slot_data, multiworld, yaml_options=yaml_options
             )
@@ -123,7 +102,7 @@ class MobileUniversalTracker:
         # Other YAML-less worlds receive raw slot data during the first generation, including
         # worlds with an instance hook: their generate_early may require it before the hook runs.
         regen_data = None
-        hook = self._static_class_attribute(world_type, "interpret_slot_data")
+        hook = reconstruction._static_class_attribute(world_type, "interpret_slot_data")
         static_hook = isinstance(hook, (staticmethod, classmethod))
         if not yaml_required:
             regen_data = world_type.interpret_slot_data(slot_data) if static_hook else slot_data
@@ -132,7 +111,6 @@ class MobileUniversalTracker:
             LOGGER.debug("Reconstructing %s from %s slot data", game, "interpreted" if static_hook else "raw")
 
         session = build_session(regen_data)
-        reconstruction_data = regen_data
 
         if not static_hook or yaml_required:
             world = session.multiworld.worlds[session.player]
@@ -140,26 +118,7 @@ class MobileUniversalTracker:
             if callable(world_hook):
                 returned = world_hook(slot_data)
                 if returned is not None:
-                    reconstruction_data = returned
                     session = build_session(returned)
-
-        # Some APWorlds expose their server pairing and discovery contract only during deferred
-        # reconstruction. Keep the established immediate graph when it already has a pairing
-        # contract; otherwise accept a deferred graph only with matching server data and declared
-        # storage keys. No game name or locally generated pairing participates in this choice.
-        world = session.multiworld.worlds[session.player]
-        if reconstruction_data is not None and self._server_entrance_pairings(world, session) is None:
-            try:
-                deferred_session = build_session(reconstruction_data, deferred_connections="on")
-                deferred_world = deferred_session.multiworld.worlds[deferred_session.player]
-                if (
-                    self._resolved_entrance_keys(deferred_world, deferred_session)
-                    and self._server_entrance_pairings(deferred_world, deferred_session) is not None
-                ):
-                    session = deferred_session
-                    LOGGER.info("Using APWorld-declared deferred entrance discovery graph")
-            except Exception as error:
-                LOGGER.debug("No compatible deferred entrance graph: %s", error)
 
         # UT 0.3.3 discards generated network items before replay: the server's
         # ReceivedItems already includes starting inventory. Keep code-less events.
@@ -198,46 +157,36 @@ class MobileUniversalTracker:
         self._apply_stored_data(session, stored_data or {})
         world = session.multiworld.worlds[session.player]
         map_state = self._map_state(world, session)
+        network_items = tuple(
+            NetworkItem(
+                int(item["item_id"]), int(item.get("location_id", 0)),
+                int(item.get("player", 0)), int(item.get("flags", 0)),
+            )
+            for item in received_items
+        )
         logic_signature = self._logic_signature(
             world,
             session,
-            received_items,
+            network_items,
             checked_locations,
             missing_locations,
         )
         if session.logic_signature == logic_signature and session.logic_payload is not None:
             result = dict(session.logic_payload)
-            if map_state is not None:
-                result["map"] = map_state
+            previous_map = result["map"]
+            if map_state is not None and previous_map is not None and "maps" in previous_map:
+                map_state["maps"] = previous_map["maps"]
+            result["map"] = map_state
             LOGGER.debug(
                 "Reused Universal Tracker logic snapshot for storage-only update; markers=%s",
                 len(map_state.get("player_markers", [])) if map_state else 0,
             )
             return result
 
-        # Checks and entrances remain useful when the APWorld has no internal map.
-        state = CollectionState(
-            session.multiworld,
-            allow_partial_entrances=bool(self._resolved_entrance_keys(world, session)),
+        state, inventory = replay_inventory(
+            session.multiworld, session.player, session.slot, network_items
         )
-
-        inventory: Counter[str] = Counter()
-        for network_item in received_items:
-            item_id = int(network_item["item_id"])
-            if item_id <= 0:
-                continue
-            item_name = world.item_id_to_name.get(item_id)
-            if item_name is None:
-                raise TrackerAdapterError(f"APWorld '{session.game}' does not define item id {item_id}.")
-            item = session.multiworld.create_item(item_name, session.player)
-            item.classification |= ItemClassification(int(network_item.get("flags", 0)))
-            state.collect(item, True)
-            if item.code is not None:
-                inventory[item.name] += 1
-
-        state.sweep_for_advancements(
-            locations=[location for location in session.multiworld.get_locations(session.player) if not location.address]
-        )
+        maps._update_graph_markers(world, session, state, map_state)
         reachable_ids = {
             int(location.address)
             for location in session.multiworld.get_reachable_locations(state, session.player)
@@ -283,24 +232,21 @@ class MobileUniversalTracker:
             {"name": region.name, "reachable": region in state.reachable_regions[session.player]}
             for region in session.multiworld.get_regions(session.player)
         ]
+        external_pack_key = tracker_setting(getattr(world, "tracker_world", None), "external_pack_key")
         result = {
             "game": session.game,
             "slot": session.slot,
             "slot_name": session.slot_name,
             "locations": sorted(locations, key=lambda location: (location["region"], location["name"])),
-            "inventory": self._inventory_payload(world, inventory),
+            "inventory": logic._inventory_payload(world, inventory),
             "regions": sorted(regions, key=lambda region: region["name"]),
             "entrances": self._entrance_payload(world, session, state),
-            "required_stored_data_keys": self._stored_data_keys(world, session),
-            "external_map_pack_missing": bool(
-                (getattr(world, "tracker_world", {}) or {}).get("external_pack_key")
-                if isinstance(getattr(world, "tracker_world", {}), dict)
-                else getattr(getattr(world, "tracker_world", None), "external_pack_key", None)
-            ) and session.external_pack_path is None,
+            "required_stored_data_keys": logic._stored_data_keys(world, session),
+            "external_map_pack_missing": bool(external_pack_key) and session.external_pack_path is None,
         }
+        result["map"] = map_state
         session.logic_signature = logic_signature
         session.logic_payload = dict(result)
-        result["map"] = map_state
         self._session = session
         return result
 

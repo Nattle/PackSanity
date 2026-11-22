@@ -2,6 +2,7 @@ package dev.nattle.packsanity.feature.universaltracker.data
 
 import dev.nattle.packsanity.core.logging.NoOpPopLogger
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerDiagnosticCode
+import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerGraphMarker
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerInitialization
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerJsonRuntime
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerReceivedItem
@@ -120,6 +121,57 @@ class EmbeddedUniversalTrackerRuntimeTest {
     }
 
     @Test
+    fun `decodes map-only graph sections and keeps numbered placements separate`() = runTest {
+        val bridge =
+            RecordingBridge(
+                result =
+                    """
+                    {"game":"Death's Door","slot":7,"slot_name":"Crow","map":{"maps":[{
+                        "id":"Hall","image_path":"map.png","location_size":12,"location_border_thickness":0,
+                        "locations":[{"location_id":2002,"x":10,"y":11,"size":20}],
+                        "graph_markers":[
+                            {"kind":"entrance","x":25.5,"y":30,
+                             "entries":[{"id":"Hall to Garden","name":"Garden Door","status":"available"}]},
+                            {"kind":"event","x":16,"y":17,"size":9,
+                             "entries":[{"id":"Garden Pot","name":"Garden Pot","status":"complete"}]}
+                        ]
+                    }]}}
+                    """
+                        .trimIndent()
+            )
+        val runtime = EmbeddedUniversalTrackerRuntime(NoOpPopLogger, bridge)
+        val result =
+            assertIs<UniversalTrackerResult.Ready>(
+                runtime.initialize(
+                    UniversalTrackerInitialization(
+                        world =
+                            UniversalTrackerWorldPackage(
+                                "death-door",
+                                "/deaths_door.apworld",
+                                "deaths_door",
+                            ),
+                        slot = UniversalTrackerSlot("Death's Door", 7, "Crow", 3, "{}"),
+                    )
+                )
+            )
+        val asset = requireNotNull(result.state.map).maps.single()
+        assertEquals(12.0, asset.locationSize)
+        assertEquals(0.0, asset.locationBorderThickness)
+        assertEquals(20.0, asset.locations.single().size)
+        val (entrance, event) = asset.graphMarkers
+        assertEquals(UniversalTrackerGraphMarker.Kind.Entrance, entrance.kind)
+        assertEquals(25.5, entrance.x)
+        assertEquals("Hall to Garden", entrance.entries.single().id)
+        assertEquals("Garden Door", entrance.entries.single().name)
+        assertEquals(UniversalTrackerGraphMarker.Status.Available, entrance.entries.single().status)
+        assertEquals(UniversalTrackerGraphMarker.Kind.Event, event.kind)
+        assertEquals(9.0, event.size)
+        assertEquals(UniversalTrackerGraphMarker.Status.Complete, event.entries.single().status)
+        assertEquals(emptyList(), result.state.locations)
+        assertEquals(emptyList(), result.state.entrances)
+    }
+
+    @Test
     fun `reports YAML requirement before tracker initialization`() = runTest {
         val bridge = RecordingBridge(requiresYaml = true)
         val runtime = EmbeddedUniversalTrackerRuntime(NoOpPopLogger, bridge)
@@ -226,6 +278,7 @@ class EmbeddedUniversalTrackerRuntimeTest {
     private class RecordingBridge(
         private val requiresYaml: Boolean = false,
         private val worldLoadError: String? = null,
+        private val result: String = RESULT,
     ) : UniversalTrackerJsonRuntime {
         var initializationRequest: String? = null
         var updateRequest: String? = null
@@ -242,13 +295,13 @@ class EmbeddedUniversalTrackerRuntimeTest {
         override fun initializeTracker(requestJson: String): String {
             initializeError?.let { throw it }
             initializationRequest = requestJson
-            return RESULT
+            return result
         }
 
         override fun updateState(stateJson: String): String {
             updateError?.let { throw it }
             updateRequest = stateJson
-            return RESULT
+            return result
         }
 
         override fun close() = Unit

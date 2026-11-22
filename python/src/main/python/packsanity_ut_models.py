@@ -13,6 +13,10 @@ class TrackerAdapterError(Exception):
     """Expected APWorld compatibility or reconstruction failure."""
 
 
+def tracker_setting(config: Any, name: str, default: Any = None) -> Any:
+    return config.get(name, default) if isinstance(config, dict) else getattr(config, name, default)
+
+
 @dataclass
 class TrackerSession:
     game: str
@@ -24,6 +28,7 @@ class TrackerSession:
     player: int = 1
     stored_data: dict[str, Any] | None = None
     map_assets: list[dict[str, Any]] | None = None
+    map_sections: dict[str, list[tuple[dict[str, Any], list[str]]]] | None = None
     logic_signature: tuple[Any, ...] | None = None
     logic_payload: dict[str, Any] | None = None
     entrances_by_storage_key: dict[str, list[Any]] | None = None

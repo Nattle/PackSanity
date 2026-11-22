@@ -39,7 +39,7 @@ The verifier requires Python 3.12 or newer. [Release workflow](../.github/workfl
 
 ```sh
 export ANDROID_HOME=/path/to/android/sdk
-python3 tools/build_release.py --version 0.1.1
+python3 tools/build_release.py --version 0.1.2
 python3 tools/verify_release.py build/release/dist
 ```
 

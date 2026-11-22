@@ -12,13 +12,12 @@ import argparse
 import json
 import shutil
 from pathlib import Path
-import zipfile
 
+from stage_tracker_core import tracker_core_source
 
 CORE_FILES = ("BaseClasses.py", "NetUtils.py", "Options.py", "Utils.py", "settings.py")
 CORE_DIRECTORIES = ("worlds/generic", "rule_builder")
-DEPENDENCY_PATHS = ("yaml", "schema", "typing_extensions.py", "pathspec")
-ARCHIPELAGO_REPOSITORY = "https://github.com/ArchipelagoMW/Archipelago"
+DEPENDENCY_PATHS = ("yaml", "schema", "typing_extensions.py", "pathspec", "packaging")
 
 
 def copy_file(source: Path, destination: Path) -> None:
@@ -34,50 +33,26 @@ def copy_tree(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
-def package_bundled_worlds(archipelago_source: Path, imports_file: Path, output: Path) -> None:
-    """Create portable APWorld archives from the pinned upstream source tree.
-
-    Archipelago's built-in worlds are directories, whereas the mobile loader deliberately accepts
-    APWorld ZIPs. Keep the source directory name in imports.json because it need not match the
-    published archive name (for example, osrs -> old_school_runescape.apworld).
-    """
-    records = json.loads(imports_file.read_text())
-    worlds = [
-        record for record in records
-        if record.get("githubUrl") == ARCHIPELAGO_REPOSITORY
-        and record.get("bundledWorldDirectory")
-        and record.get("assetName", "").endswith(".apworld")
-    ]
-    destination = output / "bundled-apworlds"
-    destination.mkdir(parents=True, exist_ok=True)
-    for world in worlds:
-        source = archipelago_source / "worlds" / world["bundledWorldDirectory"]
-        if not source.is_dir():
-            raise RuntimeError(f"Bundled Archipelago world is missing: {source}")
-        archive_name = world["assetName"]
-        package_root = archive_name.removesuffix(".apworld").lower()
-        with zipfile.ZipFile(destination / archive_name, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-            for path in sorted(source.rglob("*")):
-                if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
-                    archive.write(path, Path(package_root) / path.relative_to(source))
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--archipelago-source", type=Path, required=True)
+    parser.add_argument("--tracker-archive", type=Path, required=True)
     parser.add_argument("--cpython-source", type=Path, required=True)
     parser.add_argument("--site-packages", type=Path, required=True)
-    parser.add_argument("--imports", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
+    runtime_lock = json.loads((root / "runtime.lock.json").read_text())
+    tracker_module = tracker_core_source(args.tracker_archive, runtime_lock["universalTracker"])
     output = args.output.resolve()
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
-    runtime_lock = json.loads((Path(__file__).resolve().parents[1] / "runtime.lock.json").read_text())
     (output / "packsanity-runtime-id.txt").write_text(runtime_lock["runtimeId"], encoding="utf-8")
+    (output / "packsanity_ut_upstream.py").write_text(tracker_module, encoding="utf-8")
+    dependencies = runtime_lock["purePythonDependencies"]
+    (output / "packsanity_runtime_dependencies.py").write_text(f"DEPENDENCIES = {dependencies!r}\n", encoding="utf-8")
 
     for relative in CORE_FILES:
         copy_file(args.archipelago_source / relative, output / relative)
@@ -107,10 +82,10 @@ def main() -> None:
             copy_tree(source, output / relative)
         else:
             copy_file(source, output / relative)
-    package_bundled_worlds(args.archipelago_source, args.imports, output)
 
     notices = output / "notices"
     copy_file(args.archipelago_source / "LICENSE", notices / "Archipelago-MIT.txt")
+    copy_file(root / "licenses/UniversalTracker-MIT.txt", notices / "UniversalTracker-MIT.txt")
     copy_file(args.cpython_source / "LICENSE", notices / "CPython-PSF-2.txt")
     copy_file(
         args.site_packages / "pyyaml-6.0.3.dist-info/licenses/LICENSE",
@@ -128,6 +103,7 @@ def main() -> None:
         args.site_packages / "pathspec-1.0.4.dist-info/licenses/LICENSE",
         notices / "pathspec-MPL-2.txt",
     )
+    copy_tree(args.site_packages / f"packaging-{dependencies['packaging']}.dist-info/licenses", notices / "packaging")
 
 
 if __name__ == "__main__":

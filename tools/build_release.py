@@ -184,6 +184,7 @@ def release_manifest(release, version, files):
         "runtimeId": LOCK["runtimeId"],
         "cpython": PYTHON_VERSION,
         "archipelago": LOCK["archipelago"],
+        "universalTracker": LOCK["universalTracker"],
         "adapter": LOCK["adapter"],
         "lua": "5.4.9",
         "artifacts": [
@@ -202,6 +203,7 @@ def verify_android_aar(release, version):
             raise RuntimeError("AAR contains a mismatched runtime ID")
         with zipfile.ZipFile(BytesIO(bundle.read(prefix + "runtime.zip"))) as runtime:
             for name in (f"modules/{LOCK['adapter']['entryModule']}.py", "modules/CommonClient.py",
+                         "modules/packsanity_ut_upstream.py", "modules/notices/UniversalTracker-MIT.txt",
                          "modules/notices/CPython-PSF-2.txt",
                          f"python/{ANDROID_HOST}/lib/python{PYTHON_SERIES}/zipfile/_path/__init__.py"):
                 runtime.getinfo(name)

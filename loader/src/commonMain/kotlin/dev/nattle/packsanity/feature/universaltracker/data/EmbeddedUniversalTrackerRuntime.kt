@@ -4,6 +4,7 @@ import dev.nattle.packsanity.core.json.PopJson
 import dev.nattle.packsanity.core.logging.PopLogger
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerDiagnostic
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerDiagnosticCode
+import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerGraphMarker
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerInitialization
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerInventoryItem
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerJsonRuntime
@@ -22,6 +23,7 @@ import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerRun
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerServerState
 import dev.nattle.packsanity.feature.universaltracker.domain.UniversalTrackerState
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -212,8 +214,7 @@ class EmbeddedUniversalTrackerRuntime(
                     )
             }
         val mapState =
-            root["map"]?.let { value ->
-                val map = value.jsonObject
+            (root["map"] as? JsonObject)?.let { map ->
                 UniversalTrackerMapState(
                     maps =
                         map.array("maps").map { mapValue ->
@@ -228,13 +229,19 @@ class EmbeddedUniversalTrackerRuntime(
                                             locationId = location.long("location_id"),
                                             x = location.double("x"),
                                             y = location.double("y"),
+                                            size = location.positiveDouble("size"),
                                         )
                                     },
                                 locationIconSize =
-                                    asset["location_icon_size"]
+                                    asset.positiveDouble("location_icon_size") ?: 65.0,
+                                locationSize = asset.positiveDouble("location_size"),
+                                locationBorderThickness =
+                                    asset["location_border_thickness"]
                                         ?.jsonPrimitive
                                         ?.doubleOrNull
-                                        ?.takeIf { it > 0.0 } ?: 65.0,
+                                        ?.takeIf { it.isFinite() && it >= 0.0 },
+                                graphMarkers =
+                                    asset.array("graph_markers").mapNotNull(::parseGraphMarker),
                             )
                         },
                     activeMapId = map["active_map_id"]?.jsonPrimitive?.contentOrNull,
@@ -270,6 +277,36 @@ class EmbeddedUniversalTrackerRuntime(
                 .toSet(),
         )
     }
+
+    private fun parseGraphMarker(value: JsonElement): UniversalTrackerGraphMarker? {
+        val marker = value as? JsonObject ?: return null
+        val x = marker["x"]?.jsonPrimitive?.doubleOrNull?.takeIf { it.isFinite() } ?: return null
+        val y = marker["y"]?.jsonPrimitive?.doubleOrNull?.takeIf { it.isFinite() } ?: return null
+        val kind =
+            when (marker.string("kind")) {
+                "entrance" -> UniversalTrackerGraphMarker.Kind.Entrance
+                "event" -> UniversalTrackerGraphMarker.Kind.Event
+                else -> return null
+            }
+        val entries =
+            marker.array("entries").mapNotNull { raw ->
+                val entry = raw as? JsonObject ?: return@mapNotNull null
+                val id = entry.string("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val status =
+                    when (entry.string("status")) {
+                        "available" -> UniversalTrackerGraphMarker.Status.Available
+                        "blocked" -> UniversalTrackerGraphMarker.Status.Blocked
+                        "complete" -> UniversalTrackerGraphMarker.Status.Complete
+                        else -> return@mapNotNull null
+                    }
+                UniversalTrackerGraphMarker.Entry(id, entry.string("name").ifBlank { id }, status)
+            }
+        if (entries.isEmpty()) return null
+        return UniversalTrackerGraphMarker(kind, x, y, marker.positiveDouble("size"), entries)
+    }
+
+    private fun JsonObject.positiveDouble(key: String): Double? =
+        this[key]?.jsonPrimitive?.doubleOrNull?.takeIf { it.isFinite() && it > 0.0 }
 
     private fun parseMapMarker(
         value: kotlinx.serialization.json.JsonElement

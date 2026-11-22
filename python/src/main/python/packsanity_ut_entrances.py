@@ -1,7 +1,7 @@
 """Server-authoritative entrance pairing, discovery, and stored-data reconnection."""
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
-from packsanity_ut_models import TrackerSession
+from packsanity_ut_models import TrackerSession, tracker_setting
 if TYPE_CHECKING:
     from BaseClasses import CollectionState
     from worlds import AutoWorld
@@ -78,7 +78,8 @@ def _entrance_payload(
 
 
 def _resolved_entrance_keys(world: AutoWorld.World, session: TrackerSession) -> list[str]:
-    keys = getattr(world, "found_entrances_datastorage_key", ())
+    # Universal Tracker 0.3.3 TrackerClient resolves the world's keys before dispatching updates.
+    keys = getattr(world, "found_entrances_datastorage_key", None) or ()
     if isinstance(keys, str):
         keys = (keys,)
     return [key.format(player=session.slot, team=session.team or 0) for key in keys]
@@ -93,12 +94,7 @@ def _server_entrance_pairings(
     storage key per server pairing. Accept that structural convention only when exactly one
     slot-data object matches the declared keys; ambiguous objects remain unsupported.
     """
-    tracker_world = getattr(world, "tracker_world", {})
-    configured = (
-        tracker_world.get("entrance_pairings_slot_data_key")
-        if isinstance(tracker_world, dict)
-        else getattr(tracker_world, "entrance_pairings_slot_data_key", None)
-    )
+    configured = tracker_setting(getattr(world, "tracker_world", None), "entrance_pairings_slot_data_key")
     for key in (configured, "entrance_pairings"):
         value = session.slot_data.get(key) if isinstance(key, str) else None
         if isinstance(value, dict):
@@ -182,15 +178,12 @@ def _entrance_storage_key_by_source(
     return direct
 
 
-def _apply_stored_data(self, session: TrackerSession, values: dict[str, Any]) -> None:
+def _apply_stored_data(session: TrackerSession, values: dict[str, Any]) -> None:
     world = session.multiworld.worlds[session.player]
     reconnect = getattr(world, "reconnect_found_entrances", None)
     if session.stored_data is None:
         session.stored_data = {}
-    keys = getattr(world, "found_entrances_datastorage_key", ())
-    if isinstance(keys, str):
-        keys = (keys,)
-    entrance_keys = {key.format(player=session.slot, team=session.team or 0) for key in keys}
+    entrance_keys = set(_resolved_entrance_keys(world, session))
     for key, value in values.items():
         changed = session.stored_data.get(key) != value
         session.stored_data[key] = value
@@ -209,6 +202,6 @@ def _apply_stored_data(self, session: TrackerSession, values: dict[str, Any]) ->
                 if session.entrance_pairings_by_storage_key is None:
                     session.entrance_pairings_by_storage_key = {}
                 session.entrance_pairings_by_storage_key[key] = dict(
-                    self._server_entrance_pairings(world, session) or {}
+                    _server_entrance_pairings(world, session) or {}
                 )
 

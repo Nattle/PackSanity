@@ -11,56 +11,43 @@ import tempfile
 import unittest
 import zipfile
 
+from runtime_test_support import staged_payload
+
 
 class RuntimeStagingTest(unittest.TestCase):
     def test_staged_payload_imports_adapter_without_the_source_tree_or_bytecode(self):
-        root = Path(__file__).parents[3]
+        root = Path(__file__).resolve().parents[3]
+        inputs = staged_payload().parent / "inputs"
+        lock = json.loads((root / "runtime.lock.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)
-            core = fixture / "core"
-            python = fixture / "python"
-            dependencies = fixture / "dependencies"
             output = fixture / "output"
-            sources = {
-                "BaseClasses.py": "CollectionState = ItemClassification = LocationProgressType = MultiWorld = object\n",
-                "worlds/AutoWorld.py": "class World: pass\n",
-                "worlds/LauncherComponents.py": "from Launcher import launch\n",
-                "worlds/AutoSNIClient.py": "from worlds import LauncherComponents\n",
-                "worlds/generic/Rules.py": "def exclusion_rules(*args): pass\n",
-            }
-            for name in (
-                "NetUtils.py", "Options.py", "Utils.py", "settings.py", "Fill.py", "worlds/Files.py",
-                "entrance_rando.py", "LICENSE",
-                "worlds/_bizhawk/__init__.py", "rule_builder/__init__.py", "worlds/generic/__init__.py",
-            ):
-                sources[name] = ""
-            for name, source in sources.items():
-                path = core / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(source)
-            for name in (
-                "yaml/__init__.py", "schema/__init__.py", "typing_extensions.py", "pathspec/__init__.py",
-                "pyyaml-6.0.3.dist-info/licenses/LICENSE", "schema-0.7.8.dist-info/licenses/LICENSE-MIT",
-                "typing_extensions-4.15.0.dist-info/licenses/LICENSE", "pathspec-1.0.4.dist-info/licenses/LICENSE",
-            ):
-                path = dependencies / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("")
-            python.mkdir()
-            (python / "LICENSE").write_text("CPython license fixture")
-            imports = fixture / "imports.json"
-            imports.write_text("[]")
-            subprocess.run([
+            tracker = inputs / f"UniversalTracker-{lock['universalTracker']['version']}.apworld"
+            stage_command = [
                 sys.executable, "-B", str(root / "tools/stage_runtime.py"),
-                "--archipelago-source", str(core), "--cpython-source", str(python),
-                "--site-packages", str(dependencies), "--imports", str(imports), "--output", str(output),
-            ], check=True, capture_output=True, text=True)
+                "--archipelago-source", str(inputs / f"Archipelago-{lock['archipelago']['version']}"),
+                "--cpython-source", str(inputs / f"Python-{lock['cpython']['version']}"),
+                "--site-packages", str(inputs / "site-packages"),
+                "--output", str(output),
+                "--tracker-archive",
+            ]
+            subprocess.run([*stage_command, str(tracker)], check=True, capture_output=True, text=True)
+            invalid = fixture / "invalid-tracker.apworld"
+            invalid.write_bytes(b"corrupt download")
+            result = subprocess.run([*stage_command, str(invalid)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Universal Tracker release checksum", result.stderr)
             self.assertEqual(
-                json.loads((root / "runtime.lock.json").read_text())["runtimeId"],
+                lock["runtimeId"],
                 (output / "packsanity-runtime-id.txt").read_text(),
             )
             source_modules = {path.name for path in (root / "src/main/python").glob("*.py")}
             self.assertTrue(source_modules.issubset({path.name for path in output.glob("*.py")}))
+            self.assertEqual(
+                (root / "licenses/UniversalTracker-MIT.txt").read_bytes(),
+                (output / "notices/UniversalTracker-MIT.txt").read_bytes(),
+            )
+            self.assertTrue((output / "notices/packaging/LICENSE").is_file())
             self.assertEqual([], list(output.rglob("*.pyc")))
             resources = fixture / "resource_fixture.zip"
             with zipfile.ZipFile(resources, "w") as archive:
@@ -72,6 +59,11 @@ class RuntimeStagingTest(unittest.TestCase):
             probe = subprocess.run([
                 sys.executable, "-B", "-S", "-c",
                 "import json, pathlib, sys; import packsanity_ut_adapter as a; "
+                "import packsanity_ut_upstream as ut; "
+                "from packsanity_ut_requirements import _requirement_is_available; "
+                "assert _requirement_is_available('schema==0.7.8.0'); "
+                "assert 'Generate' not in sys.modules and 'tracker' not in sys.modules; "
+                "assert callable(ut.TMain) and callable(ut.replay_items); "
                 "import worlds.AutoSNIClient, bsdiff4, requests, orjson, pkg_resources; "
                 "from orjson import orjson as encoder; "
                 "assert encoder.loads(orjson.dumps({'foo': 1})) == {'foo': 1}; "

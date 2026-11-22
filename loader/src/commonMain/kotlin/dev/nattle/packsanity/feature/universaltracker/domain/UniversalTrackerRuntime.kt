@@ -146,9 +146,39 @@ data class UniversalTrackerMapAsset(
     val imagePath: String,
     val locations: List<UniversalTrackerMapLocation>,
     val locationIconSize: Double = 65.0,
+    val locationSize: Double? = null,
+    val locationBorderThickness: Double? = null,
+    val graphMarkers: List<UniversalTrackerGraphMarker> = emptyList(),
 )
 
-data class UniversalTrackerMapLocation(val locationId: Long, val x: Double, val y: Double)
+data class UniversalTrackerMapLocation(
+    val locationId: Long,
+    val x: Double,
+    val y: Double,
+    val size: Double? = null,
+)
+
+/** Map-only markers from reconstructed entrances and code-less events. */
+data class UniversalTrackerGraphMarker(
+    val kind: Kind,
+    val x: Double,
+    val y: Double,
+    val size: Double?,
+    val entries: List<Entry>,
+) {
+    enum class Kind {
+        Entrance,
+        Event,
+    }
+
+    enum class Status {
+        Available,
+        Blocked,
+        Complete,
+    }
+
+    data class Entry(val id: String, val name: String, val status: Status)
+}
 
 data class UniversalTrackerMapMarker(
     val x: Double,

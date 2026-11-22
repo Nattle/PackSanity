@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
 import copy
 import json
 from pathlib import Path
@@ -13,18 +14,17 @@ import zipfile
 
 from test_packsanity_ut_adapter import MobileUniversalTracker, TrackerAdapterError, TrackerSession
 import packsanity_ut_adapter as adapter
-import packsanity_ut_reconstruction as reconstruction
+from packsanity_ut_requirements import BUNDLED_PYTHON_REQUIREMENTS, _read_requirements, _requirement_is_available
+import packsanity_ut_upstream as upstream
 
 
 class PackageGateTest(unittest.TestCase):
     def test_dependency_gate_matches_shipped_runtime_versions(self):
-        from packsanity_ut_requirements import BUNDLED_PYTHON_REQUIREMENTS
-
         runtime_root = Path(__file__).resolve().parents[3]
         locked = json.loads((runtime_root / "runtime.lock.json").read_text())["purePythonDependencies"]
         self.assertEqual({name.lower(): version for name, version in locked.items()}, BUNDLED_PYTHON_REQUIREMENTS)
-        self.assertTrue(MobileUniversalTracker._requirement_is_available("pathspec>=1.0"))
-        self.assertFalse(MobileUniversalTracker._requirement_is_available("typing_extensions>=4.16"))
+        self.assertTrue(_requirement_is_available("pathspec>=1.0"))
+        self.assertFalse(_requirement_is_available("typing_extensions>=4.16"))
 
     def test_declared_requirements_are_sorted_deduplicated_and_not_installed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -34,16 +34,19 @@ class PackageGateTest(unittest.TestCase):
                 archive.writestr("example/nested/requirements.txt", "schema>=0.7\n-r other.txt\n")
             self.assertEqual(
                 ["-r other.txt", "PyYAML==6.0.3", "schema>=0.7"],
-                MobileUniversalTracker._read_requirements(path),
+                _read_requirements(path),
             )
 
     def test_fixed_dependency_gate_rejects_external_and_unknown_requirements(self):
-        for requirement in ("schema>=0.7,<1", "PyYAML==6.0.*", "typing_extensions>=4"):
+        for requirement in ("schema>=0.7,<1", "schema==0.7.8.0", "PyYAML==6.0.*", "typing_extensions>=4"):
             with self.subTest(requirement=requirement):
-                self.assertTrue(MobileUniversalTracker._requirement_is_available(requirement))
-        for requirement in ("schema>=1", "unbundled", "schema @ https://example.org/a.whl", "-r a.txt"):
+                self.assertTrue(_requirement_is_available(requirement))
+        for requirement in (
+            "schema>=1", "schema==0.7.8rc1", 'schema; python_version >= "3.0"',
+            "unbundled", "schema @ https://example.org/a.whl", "-r a.txt",
+        ):
             with self.subTest(requirement=requirement):
-                self.assertFalse(MobileUniversalTracker._requirement_is_available(requirement))
+                self.assertFalse(_requirement_is_available(requirement))
 
     def test_unavailable_requirements_block_world_import(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -57,6 +60,7 @@ class PackageGateTest(unittest.TestCase):
     def test_world_import_receives_manifest_and_world_version(self):
         registry = types.SimpleNamespace(world_types={})
         source = """from worlds import AutoWorld
+assert __name__ == __package__ == __spec__.name == "worlds.example"
 class ExampleWorld:
     ut_can_gen_without_yaml = True
 AutoWorld.AutoWorldRegister.world_types["Example"] = ExampleWorld
@@ -119,7 +123,6 @@ class ReconstructionContractTest(unittest.TestCase):
         with (
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
             mock.patch.object(tracker, "_build_multiworld", side_effect=build),
-            mock.patch.object(tracker, "_server_entrance_pairings", return_value={}),
             mock.patch.object(tracker, "update", return_value={"ok": True}),
         ):
             self.assertEqual({"ok": True}, tracker.initialize("Example", 4, "Player", {"seed": 9}))
@@ -143,7 +146,6 @@ class ReconstructionContractTest(unittest.TestCase):
         with (
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
             mock.patch.object(tracker, "_build_multiworld", return_value=multiworld) as build,
-            mock.patch.object(tracker, "_server_entrance_pairings", return_value={}),
         ):
             session = tracker._reconstruct_session("Example", 4, "Player", slot_data, None, None)
         build.assert_called_once_with("Example", "Player", {}, {"reconstructed": 9})
@@ -172,7 +174,6 @@ class ReconstructionContractTest(unittest.TestCase):
         with (
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
             mock.patch.object(tracker, "_build_multiworld", side_effect=generate) as build,
-            mock.patch.object(tracker, "_server_entrance_pairings", return_value={}),
             mock.patch.object(tracker, "update", return_value={}),
         ):
             tracker.initialize("Example", 4, "Player", {"seed": 9})
@@ -189,38 +190,24 @@ class ReconstructionContractTest(unittest.TestCase):
         with (
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
             mock.patch.object(tracker, "_build_multiworld", return_value=multiworld) as build,
-            mock.patch.object(tracker, "_server_entrance_pairings", return_value={}),
             mock.patch.object(tracker, "update", return_value={}),
         ):
             tracker.initialize("Example", 4, "Player", slot_data)
         build.assert_called_once_with("Example", "Player", {}, slot_data)
 
-    def test_reconstruction_selects_deferred_graph_with_server_pairings_and_storage_keys(self):
-        class World:
-            ut_can_gen_without_yaml = True
-
-        tracker = MobileUniversalTracker()
-        immediate = types.SimpleNamespace(worlds={1: World()}, precollected_items={1: []})
-        deferred = types.SimpleNamespace(worlds={1: World()}, precollected_items={1: []})
-        slot_data = {"entrance_pairings": {"A": "B"}}
-        with (
-            mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
-            mock.patch.object(tracker, "_build_multiworld", side_effect=[immediate, deferred]) as build,
-            mock.patch.object(tracker, "_server_entrance_pairings", side_effect=[None, slot_data["entrance_pairings"]]),
-            mock.patch.object(tracker, "_resolved_entrance_keys", return_value=["entrances"]) as keys,
-        ):
-            session = tracker._reconstruct_session("Example", 4, "Player", slot_data, None, None)
-        self.assertIs(deferred, session.multiworld)
-        self.assertEqual(slot_data, session.slot_data)
-        build.assert_called_with("Example", "Player", {}, slot_data, deferred_connections="on")
-        keys.assert_called_once_with(deferred.worlds[1], session)
-
     def test_fake_generation_runs_only_the_ordered_tracker_stages(self):
         calls = []
-        world = types.SimpleNamespace(location_name_groups={"Group": {"One", "Two"}}, options=types.SimpleNamespace(exclude_locations=types.SimpleNamespace(value={"Skip", "Group"})))
+        excluded = types.SimpleNamespace(value={"Skip", "Group"})
+        excluded.verify = mock.Mock(side_effect=lambda *args: setattr(excluded, "value", {"Skip", "One", "Two"}))
+        world = types.SimpleNamespace(
+            options=types.SimpleNamespace(exclude_locations=excluded),
+            location_name_groups={"Restored group": {"Three"}},
+        )
 
         class Multiworld:
             worlds = {1: world}
+            plando_options = 0
+            player_ids = (1,)
 
             def __init__(self, players):
                 self.players = players
@@ -231,15 +218,23 @@ class ReconstructionContractTest(unittest.TestCase):
             def set_options(self, options):
                 calls.append(("options", options))
 
-        base_world = type("BaseWorld", (), {step: object() for step in reconstruction.GENERATION_STEPS})
+        stages = ("generate_early", "create_regions", "create_items", "set_rules",
+                  "connect_entrances", "generate_basic")
+        base_world = type("BaseWorld", (), {step: object() for step in stages})
+
+        def generate(multiworld, step):
+            calls.append((step, set(excluded.value) if step == "generate_early" else multiworld))
+            if step == "set_rules":
+                excluded.value.update({"Scripted location", "Restored group"})
+
         with (
-            mock.patch.object(reconstruction, "MultiWorld", Multiworld),
-            mock.patch.object(reconstruction, "CollectionState", return_value="collection state"),
+            mock.patch.object(upstream, "MultiWorld", Multiworld),
+            mock.patch.object(upstream, "CollectionState", return_value="collection state") as collection_state,
             mock.patch.object(adapter.AutoWorld, "World", base_world),
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": object}), create=True),
-            mock.patch.object(adapter.AutoWorld, "call_all", side_effect=lambda mw, step: calls.append((step, set(world.options.exclude_locations.value) if step == "generate_early" else mw)), create=True),
-            mock.patch.object(reconstruction, "exclusion_rules", side_effect=lambda mw, player, excluded: calls.append(("exclude", player, excluded))),
-            mock.patch.object(MobileUniversalTracker, "_options_namespace", return_value="options"),
+            mock.patch.object(adapter.AutoWorld, "call_all", side_effect=generate),
+            mock.patch.object(upstream, "exclusion_rules", side_effect=lambda mw, player, excluded: calls.append(("exclude", player, excluded))),
+            mock.patch.object(MobileUniversalTracker, "_options_namespace", return_value=Namespace()),
         ):
             result = MobileUniversalTracker()._build_multiworld("Example", "Player", {}, {"seed": 9})
         self.assertEqual([
@@ -247,9 +242,11 @@ class ReconstructionContractTest(unittest.TestCase):
             "exclude", "connect_entrances", "generate_basic",
         ], [call[0] for call in calls])
         self.assertIn(("generate_early", {"Skip", "One", "Two"}), calls)
-        self.assertIn(("exclude", 1, {"Skip", "One", "Two"}), calls)
+        self.assertIn(("exclude", 1, {"Skip", "One", "Two", "Three", "Scripted location"}), calls)
+        excluded.verify.assert_called_once_with(world, "Player", 0)
         self.assertEqual({"Example": {"seed": 9}}, result.re_gen_passthrough)
-        self.assertEqual("off", result.enforce_deferred_connections)
+        self.assertEqual("default", result.enforce_deferred_connections)
+        collection_state.assert_called_once_with(result, True)
         self.assertTrue(result.generation_is_fake)
         self.assertEqual({1: "Player"}, result.player_name)
 
@@ -257,24 +254,43 @@ class ReconstructionContractTest(unittest.TestCase):
         tracker = MobileUniversalTracker()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "player.yaml"
-            path.write_text("fixture")
-            payload = {"game": "Example", "name": "Player", "difficulty": "normal", "Example": {"difficulty": "hard"}}
-            with mock.patch.object(reconstruction.yaml, "safe_load", return_value=payload):
-                result = tracker._load_yaml_options(str(path), "Example", "Player")
+            path.write_text("game: Example\nname: Player\ndifficulty: normal\nExample: {difficulty: hard}\n")
+            result = tracker._load_yaml_options(str(path), "Example", "Player")
             self.assertEqual("hard", result["difficulty"])
-            with mock.patch.object(reconstruction.yaml, "safe_load", return_value={"trigger": [], "linked_options": []}):
-                with self.assertRaisesRegex(TrackerAdapterError, "linked_options, trigger"):
-                    tracker._load_yaml_options(str(path), "Example", "Player")
+            path.write_text("trigger: []\nlinked_options: []\n")
+            with self.assertRaisesRegex(TrackerAdapterError, "linked_options, trigger"):
+                tracker._load_yaml_options(str(path), "Example", "Player")
+
+    def test_yaml_merge_precedence_and_inline_duplicate_checks(self):
+        tracker = MobileUniversalTracker()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "player.yaml"
+            path.write_text(
+                "defaults: &defaults {difficulty: easy, mode: casual}\n"
+                "Example:\n"
+                "  <<: [{<<: *defaults, difficulty: normal}, {difficulty: hard, mode: expert}]\n"
+                "  mode: standard\n"
+            )
+            result = tracker._load_yaml_options(str(path), "Example", "Player")
+            self.assertEqual("normal", result["difficulty"])
+            self.assertEqual("standard", result["mode"])
+
+            path.write_text("Example: {<<: {difficulty: easy, difficulty: hard}}\n")
+            with self.assertRaisesRegex(TrackerAdapterError, "Duplicate key difficulty"):
+                tracker._load_yaml_options(str(path), "Example", "Player")
 
 
 class LiveResultContractTest(unittest.TestCase):
     def setUp(self):
         self.tracker = MobileUniversalTracker()
-        self.world = types.SimpleNamespace(item_name_to_id={"Zeta": 8, "Alpha": 3}, item_id_to_name={3: "Alpha"})
+        self.world = types.SimpleNamespace(
+            item_name_to_id={"Zeta": 8, "Alpha": 3}, item_id_to_name={3: "Alpha"}, location_id_to_name={},
+        )
         region = types.SimpleNamespace(name="Room", exits=[])
         self.location = types.SimpleNamespace(address=9, name="Check", parent_region=region, progress_type="normal")
-        self.item = types.SimpleNamespace(name="Alpha", code=3, classification=0)
+        self.item = types.SimpleNamespace(name="Alpha", code=3, classification=0, advancement=True)
         self.multiworld = types.SimpleNamespace(
+            game={1: "Example"},
             worlds={1: self.world},
             create_item=lambda name, player: self.item,
             get_locations=lambda player: [self.location],
@@ -290,7 +306,7 @@ class LiveResultContractTest(unittest.TestCase):
     def test_storage_only_update_reuses_logic_but_recomputes_maps(self):
         maps = [{"active_map_id": "first"}, {"active_map_id": "second"}]
         with (
-            mock.patch.object(adapter, "CollectionState", return_value=self.collection_state) as collection,
+            mock.patch.object(upstream, "CollectionState", return_value=self.collection_state) as collection,
             mock.patch.object(self.tracker, "_map_state", side_effect=maps) as map_state,
         ):
             first = self.tracker.update([{"item_id": 3, "flags": 2}], set(), {9})
@@ -306,21 +322,21 @@ class LiveResultContractTest(unittest.TestCase):
         self.assertEqual(2, self.item.classification)
 
     def test_checked_changes_recompute_logic(self):
-        with mock.patch.object(adapter, "CollectionState", return_value=self.collection_state) as collection:
+        with mock.patch.object(upstream, "CollectionState", return_value=self.collection_state) as collection:
             self.tracker.update([], set(), {9})
             checked = self.tracker.update([], {9}, set())
         self.assertEqual(2, collection.call_count)
         self.assertTrue(checked["locations"][0]["checked"])
 
     def test_unknown_positive_item_is_reported_and_negative_items_are_ignored(self):
-        with mock.patch.object(adapter, "CollectionState", return_value=self.collection_state):
+        with mock.patch.object(upstream, "CollectionState", return_value=self.collection_state):
             ignored = self.tracker.update([{"item_id": -1}], set(), set())
             self.assertTrue(all(item["count"] == 0 for item in ignored["inventory"]))
             with self.assertRaisesRegex(TrackerAdapterError, "does not define item id 100"):
                 self.tracker.update([{"item_id": 100}], set(), set())
 
     def test_known_membership_includes_unmatched_ids_and_respects_an_empty_list(self):
-        with mock.patch.object(adapter, "CollectionState", return_value=self.collection_state):
+        with mock.patch.object(upstream, "CollectionState", return_value=self.collection_state):
             reconstructed = self.tracker.update([], set(), None)
             empty_slot = self.tracker.update([], set(), set())
             complete = self.tracker.update([], {12}, set())
@@ -342,7 +358,7 @@ class LiveResultContractTest(unittest.TestCase):
         updated_graph.get_reachable_locations = lambda state, player: []
         replacement = TrackerSession("Example", 4, "Player", 2, {"option": 1}, updated_graph)
         with (
-            mock.patch.object(adapter, "CollectionState", return_value=self.collection_state),
+            mock.patch.object(upstream, "CollectionState", return_value=self.collection_state),
             mock.patch.object(self.tracker, "_reconstruct_session", return_value=replacement) as rebuild,
         ):
             initial = self.tracker.update([], set(), {9})
@@ -360,7 +376,7 @@ class LiveResultContractTest(unittest.TestCase):
     def test_failed_rebuild_publishes_no_result_and_can_retry(self):
         updated = TrackerSession("Example", 4, "Player", 2, {"option": 1}, self.multiworld)
         with (
-            mock.patch.object(adapter, "CollectionState", return_value=self.collection_state),
+            mock.patch.object(upstream, "CollectionState", return_value=self.collection_state),
             mock.patch.object(self.tracker, "_reconstruct_session", side_effect=[ValueError("bad data"), updated]),
         ):
             with self.assertRaisesRegex(TrackerAdapterError, "Could not reconstruct from updated slot data: bad data"):

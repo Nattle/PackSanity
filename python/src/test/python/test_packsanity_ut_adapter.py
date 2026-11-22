@@ -9,41 +9,19 @@ import unittest
 from unittest import mock
 import zipfile
 
-
-def install_runtime_stubs() -> None:
-    base_classes = types.ModuleType("BaseClasses")
-    base_classes.CollectionState = object
-    base_classes.ItemClassification = int
-    base_classes.LocationProgressType = types.SimpleNamespace(EXCLUDED="excluded")
-    base_classes.MultiWorld = object
-    sys.modules["BaseClasses"] = base_classes
-
-    worlds = types.ModuleType("worlds")
-    worlds.AutoWorld = types.SimpleNamespace(World=object)
-    worlds.__path__ = []
-    sys.modules["worlds"] = worlds
-    generic = types.ModuleType("worlds.generic")
-    generic.__path__ = []
-    sys.modules["worlds.generic"] = generic
-    rules = types.ModuleType("worlds.generic.Rules")
-    rules.exclusion_rules = lambda *_: None
-    sys.modules["worlds.generic.Rules"] = rules
-
-    if "yaml" not in sys.modules:
-        yaml = types.ModuleType("yaml")
-        yaml.YAMLError = ValueError
-        yaml.safe_load = lambda _: {}
-        sys.modules["yaml"] = yaml
+from runtime_test_support import staged_payload
 
 
-install_runtime_stubs()
-sys.path.insert(0, str(Path(__file__).parents[2] / "main" / "python"))
+sys.path.insert(0, str(staged_payload()))
 
 from packsanity_ut_adapter import (  # noqa: E402
     MobileUniversalTracker,
     TrackerAdapterError,
     TrackerSession,
 )
+from packsanity_ut_entrances import _entrance_storage_key_by_source
+from packsanity_ut_maps import _normalize_player_markers
+from packsanity_ut_packages import _local_rule_builder_fallback, _normalized_package_path
 
 
 class PositionContractTest(unittest.TestCase):
@@ -62,7 +40,8 @@ class PositionContractTest(unittest.TestCase):
                     "size": 24.0,
                 }
             ],
-            self.tracker._normalize_player_markers(
+            _normalize_player_markers(
+                "example_world",
                 "tracker",
                 "overworld",
                 24.0,
@@ -71,7 +50,8 @@ class PositionContractTest(unittest.TestCase):
         )
 
     def test_supports_multiple_markers_and_filters_hidden_or_invalid_results(self) -> None:
-        markers = self.tracker._normalize_player_markers(
+        markers = _normalize_player_markers(
+            "example_world",
             "tracker",
             "dungeon",
             18.0,
@@ -89,7 +69,8 @@ class PositionContractTest(unittest.TestCase):
         self.assertIsNone(markers[1]["icon_path"])
 
     def test_supports_tuple_of_markers(self) -> None:
-        markers = self.tracker._normalize_player_markers(
+        markers = _normalize_player_markers(
+            "example_world",
             "tracker",
             "dungeon",
             25.0,
@@ -99,13 +80,11 @@ class PositionContractTest(unittest.TestCase):
         self.assertEqual([10.0, 30.0], [marker["x"] for marker in markers])
 
     def test_rejects_marker_icon_paths_that_escape_the_pack(self) -> None:
-        with self.assertRaises(TrackerAdapterError):
-            self.tracker._normalize_player_markers(
-                "tracker",
-                "overworld",
-                24.0,
-                (1, 2, "../../outside.png"),
-            )
+        for external in (False, True):
+            with self.subTest(external=external), self.assertRaises(TrackerAdapterError):
+                _normalize_player_markers(
+                    "example_world", "tracker", "overworld", 24.0, (1, 2, "../../outside.png"), external=external,
+                )
 
     def test_position_storage_does_not_invalidate_cached_logic(self) -> None:
         world = types.SimpleNamespace(found_entrances_datastorage_key=("{player}_{team}_entrances",))
@@ -114,11 +93,11 @@ class PositionContractTest(unittest.TestCase):
             "4_2_coords": {"x": 1},
             "4_2_entrances": ["A"],
         }
-        first = self.tracker._logic_signature(world, session, [], set(), set())
+        first = self.tracker._logic_signature(world, session, (), set(), set())
         session.stored_data["4_2_coords"] = {"x": 99}
-        second = self.tracker._logic_signature(world, session, [], set(), set())
+        second = self.tracker._logic_signature(world, session, (), set(), set())
         session.stored_data["4_2_entrances"] = ["A", "B"]
-        third = self.tracker._logic_signature(world, session, [], set(), set())
+        third = self.tracker._logic_signature(world, session, (), set(), set())
 
         self.assertEqual(first, second)
         self.assertNotEqual(second, third)
@@ -370,7 +349,7 @@ class EntranceContractTest(unittest.TestCase):
         )
         world = types.SimpleNamespace(found_entrances_datastorage_key=keys)
         session = TrackerSession("Example", 4, "Player", 0, {"links": pairings}, object())
-        by_source = MobileUniversalTracker._entrance_storage_key_by_source(world, session, pairings)
+        by_source = _entrance_storage_key_by_source(world, session, pairings)
         self.assertEqual("Slot:4:Shop Previous 1", by_source["Shop 1"])
         self.assertEqual("Slot:4:shop", by_source["shop"])
 
@@ -415,7 +394,7 @@ class LoadedWorldLifecycleTest(unittest.TestCase):
         sys.modules["rule_builder"] = core_module
         original_import = builtins.__import__
         try:
-            with self.tracker._local_rule_builder_fallback(self.apworld, "example_world"):
+            with _local_rule_builder_fallback(self.apworld, "example_world"):
                 with self.assertRaises(ModuleNotFoundError):
                     __import__("rule_builder", fromlist=("RuleWorldMixin",))
             self.assertIs(builtins.__import__, original_import)
@@ -430,7 +409,7 @@ class LoadedWorldLifecycleTest(unittest.TestCase):
         with zipfile.ZipFile(legacy, "w") as archive:
             archive.writestr("Example_World/__init__.py", "")
 
-        normalized = self.tracker._normalized_package_path(legacy, "example_world")
+        normalized = _normalized_package_path(legacy, "example_world")
 
         self.assertNotEqual(legacy, normalized)
         self.assertEqual("example_world", normalized.stem.rsplit("-", 1)[0])

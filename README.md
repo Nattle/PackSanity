@@ -18,7 +18,7 @@ make build
 Gradle builds the Kotlin JVM loader and CLI. Make runs Meson to build the C Lua host in `build/meson`.
 
 - **Lua JNI.** To include JNI, run `make build MESON_ARGS=-Djni=true`. Point `PACKSANITY_NATIVE_DIR` at `build/meson` when running a JVM consumer.
-- **CPython bridge.** Install Git and Python 3 with pip, then run `make python-native` to build the optional bridge in `build/python-native-meson`. This prepares the pinned CPython and Archipelago runtime. Set `PACKSANITY_PYTHON` to select the bootstrap interpreter for this build or the APWorld checker. [Runtime pins](python/runtime.lock.json)
+- **CPython bridge.** Install Git and Python 3 with pip, then run `make python-native` to build the optional bridge in `build/python-native-meson`. This prepares the pinned CPython, Archipelago, and Universal Tracker runtime. Set `PACKSANITY_PYTHON` to select the bootstrap interpreter for this build or the APWorld checker. [Runtime pins](python/runtime.lock.json)
 
 For Android and iOS bundles, follow the [release build instructions](docs/releasing.md#build-and-verify).
 
@@ -89,9 +89,10 @@ Serialize native calls and use a new handle or process when switching APWorlds. 
 ```sh
 ./gradlew spotlessApply :loader:jvmTest
 make test
-runtime_python=$(python3 python/tools/prepare_runtime.py)
-"$runtime_python" -m unittest discover -s python/src/test/python
-"$runtime_python" tests/test_integration.py
+python3.13 -m unittest discover -s python/src/test/python
+python3.13 tests/test_integration.py
 ```
+
+The Python tests fetch and stage the locked runtime inputs on first use.
 
 [Third-party notices](THIRD_PARTY_NOTICES.md)

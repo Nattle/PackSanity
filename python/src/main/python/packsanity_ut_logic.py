@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections import Counter
 import json
 from typing import Any, TYPE_CHECKING
-from packsanity_ut_models import TrackerSession
+from packsanity_ut_entrances import _resolved_entrance_keys
+from packsanity_ut_models import TrackerSession, tracker_setting
 if TYPE_CHECKING:
+    from NetUtils import NetworkItem
     from worlds import AutoWorld
 
 
@@ -19,16 +21,10 @@ def _inventory_payload(world: AutoWorld.World, inventory: Counter[str]) -> list[
 def _logic_signature(
     world: AutoWorld.World,
     session: TrackerSession,
-    received_items: list[dict[str, Any]],
+    received_items: tuple[NetworkItem, ...],
     checked_locations: set[int],
     missing_locations: set[int] | None,
 ) -> tuple[Any, ...]:
-    entrance_keys = getattr(world, "found_entrances_datastorage_key", ())
-    if isinstance(entrance_keys, str):
-        entrance_keys = (entrance_keys,)
-    resolved_entrance_keys = sorted(
-        key.format(player=session.slot, team=session.team or 0) for key in entrance_keys
-    )
     entrance_values = tuple(
         (
             key,
@@ -39,19 +35,10 @@ def _logic_signature(
                 separators=(",", ":"),
             ),
         )
-        for key in resolved_entrance_keys
-    )
-    item_values = tuple(
-        (
-            int(item.get("item_id", 0)),
-            int(item.get("location_id", 0)),
-            int(item.get("player", 0)),
-            int(item.get("flags", 0)),
-        )
-        for item in received_items
+        for key in sorted(_resolved_entrance_keys(world, session))
     )
     return (
-        item_values,
+        received_items,
         tuple(sorted(checked_locations)),
         tuple(sorted(missing_locations)) if missing_locations is not None else None,
         entrance_values,
@@ -59,22 +46,15 @@ def _logic_signature(
 
 
 def _stored_data_keys(world: AutoWorld.World, session: TrackerSession) -> list[str]:
-    keys = getattr(world, "found_entrances_datastorage_key", ())
-    if isinstance(keys, str):
-        keys = (keys,)
-    tracker_world = getattr(world, "tracker_world", {})
-    setting = (
-        tracker_world.get
-        if isinstance(tracker_world, dict)
-        else lambda name, default=None: getattr(tracker_world, name, default)
-    )
-    keys = tuple(keys) + tuple(
-        value
+    keys = set(_resolved_entrance_keys(world, session))
+    tracker_world = getattr(world, "tracker_world", None)
+    keys.update(
+        value.format(player=session.slot, team=session.team or 0)
         for value in (
-            setting("map_page_setting_key"),
-            setting("location_setting_key"),
+            tracker_setting(tracker_world, "map_page_setting_key"),
+            tracker_setting(tracker_world, "location_setting_key"),
         )
         if isinstance(value, str)
     )
-    return sorted({key.format(player=session.slot, team=session.team or 0) for key in keys})
+    return sorted(keys)
 

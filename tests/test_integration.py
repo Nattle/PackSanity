@@ -105,6 +105,56 @@ class LoadingIntegrationTest(unittest.TestCase):
         self.assertEqual(report['state']['inventory'][0]['count'],1)
         self.assertTrue(report['state']['locations'][0]['reachable'])
 
+    def test_world_can_exclude_a_scripted_location(self):
+        fixture = json.loads((ROOT/'tests/scenarios/example-world.json').read_text())
+        fixture['slot_data'] = {'exclude_scripted_location': True}
+        path = Path(self.temp.name) / 'scripted-exclusion.json'
+        path.write_text(json.dumps(fixture))
+        result = self.run_world('--fixture', str(path), '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_world_declared_deferred_entrance_updates_reachability_without_pairings(self):
+        fixture = Path(self.temp.name) / 'deferred-entrance.json'
+        chest = {'id': 2001, 'name': 'Chest', 'region': 'Hall', 'checked': False, 'excluded': False}
+        snapshot = {
+            'received_items': [{'item_id': 1001, 'location_id': -1, 'player': 4, 'flags': 1}],
+            'missing_locations': [2001],
+        }
+        fixture.write_text(json.dumps({
+            'slot_data': {'deferred_discovery': True},
+            'updates': [
+                {'state': snapshot, 'expect': {
+                    'locations': [dict(chest, reachable=False)],
+                    'required_stored_data_keys': ['Door:4:0'],
+                    'entrances': [],
+                }},
+                {'state': dict(snapshot, stored_data={'Door:4:0': [105]}), 'expect': {
+                    'locations': [dict(chest, reachable=True)],
+                    'entrances': [],
+                }},
+            ],
+        }))
+        result = self.run_world('--slot', '4', '--fixture', str(fixture), '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_tracker_replay_attaches_local_item_origin_only(self):
+        location = {'id': 2001, 'name': 'Chest', 'region': 'Hall', 'checked': False, 'excluded': False}
+        fixture = Path(self.temp.name) / 'item-origin.json'
+        fixture.write_text(json.dumps({
+            'slot_data': {'require_local_item_origin': True},
+            'updates': [
+                {
+                    'state': {'received_items': [{
+                        'item_id': 1001, 'location_id': 2001, 'player': player, 'flags': 1,
+                    }]},
+                    'expect': {'locations': [dict(location, reachable=reachable)]},
+                }
+                for player, reachable in ((5, False), (4, True))
+            ],
+        }))
+        result = self.run_world('--slot', '4', '--fixture', str(fixture), '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_apworld_wrong_counts_fail(self):
         fixture = Path(self.temp.name)/'bad-world.json'
         fixture.write_text('{"expect":{"locations":999}}')
@@ -179,6 +229,7 @@ class LoadingIntegrationTest(unittest.TestCase):
         world = Path(self.temp.name)/'registration_world.apworld'
         source = (ROOT/'tests/fixtures/tiny_world/__init__.py').read_text()
         with zipfile.ZipFile(world, 'w') as archive:
+            archive.writestr('registration_world/requirements.txt', 'schema==0.7.8.0\n')
             archive.writestr('registration_world/__init__.py',
                              'from worlds.AutoSNIClient import SNIClient, Read, SnesReader, SnesData\n'
                              'from orjson import orjson\n'
@@ -287,10 +338,33 @@ class LoadingIntegrationTest(unittest.TestCase):
         with zipfile.ZipFile(world,'w') as archive:
             archive.writestr('yaml_world/__init__.py',source)
         yaml = Path(self.temp.name)/'player.yaml'
-        yaml.write_text('name: PackSanity\ngame: PackSanity World\nPackSanity World: {}\n')
+        player_options = ('name: PackSanity\ngame: PackSanity World\nPackSanity World:\n'
+                          '  exclude_locations: [Early checks]\n')
+        yaml.write_text(player_options)
         result = self.run_world('--yaml',str(yaml),'--json',world=world)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(json.loads(result.stdout)['locations'],1)
+        locations = json.loads(result.stdout)['state']['locations']
+        self.assertEqual(len(locations), 1)
+        self.assertTrue(locations[0]['excluded'])
+
+        yaml.write_text(player_options.replace('Early checks', 'Unknown check'))
+        result = self.run_world('--yaml', str(yaml), world=world)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unknown excluded locations: Unknown check', result.stderr)
+
+        yaml.write_text(player_options + '  exclude_locations: []\n')
+        result = self.run_world('--yaml', str(yaml), world=world)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Duplicate key exclude_locations', result.stderr)
+
+        yaml.write_text(
+            'name: PackSanity\ngame: PackSanity World\n'
+            'defaults: &defaults {exclude_locations: [Early checks]}\n'
+            'PackSanity World:\n  <<: *defaults\n'
+        )
+        result = self.run_world('--yaml', str(yaml), '--json', world=world)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)['state']['locations'][0]['excluded'])
 
     def test_interpreter_enforces_single_loaded_world(self):
         code = '''

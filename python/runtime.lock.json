@@ -1,5 +1,5 @@
 {
-  "runtimeId": "packsanity-ut-runtime-4",
+  "runtimeId": "packsanity-ut-runtime-11",
   "cpython": {
     "version": "3.13.15",
     "sourceUrl": "https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz",
@@ -10,14 +10,20 @@
     "gitUrl": "https://github.com/ArchipelagoMW/Archipelago.git",
     "commit": "54803be064fc7e80c4628777ed0b46a9390f255f"
   },
+  "universalTracker": {
+    "version": "0.3.3",
+    "sourceUrl": "https://github.com/FarisTheAncient/Archipelago/releases/download/Tracker_v0.3.3/tracker.apworld",
+    "sha256": "a909f96404b0009865d39b87cec8bb749446783577d77bd4fa14431cef0c2140"
+  },
   "adapter": {
     "entryModule": "packsanity_ut_adapter",
-    "version": "8"
+    "version": "15"
   },
   "purePythonDependencies": {
     "PyYAML": "6.0.3",
     "schema": "0.7.8",
     "typing-extensions": "4.15.0",
-    "pathspec": "1.0.4"
+    "pathspec": "1.0.4",
+    "packaging": "26.1"
   }
 }
