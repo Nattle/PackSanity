@@ -216,11 +216,23 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--host-only", action="store_true", help="Build the Lua host bundle for this OS and architecture")
     parser.add_argument("--android-sdk", type=Path, default=os.getenv("ANDROID_HOME", os.getenv("ANDROID_SDK_ROOT")))
+    parser.add_argument("--verify", action="store_true", help="Run source tests and verify the full release in a consumer project")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?", args.version):
         parser.error("Use a version such as 0.1.0")
     if not args.host_only and (sys.platform != "darwin" or not args.android_sdk):
         parser.error("A full release requires macOS with Xcode and an Android SDK (use --android-sdk)")
+
+    verify = args.verify and not args.host_only
+    if verify:
+        os.environ["ANDROID_HOME"] = str(args.android_sdk.resolve())
+        bootstrap = os.environ.setdefault("PACKSANITY_PYTHON", sys.executable)
+        run("./gradlew", "spotlessCheck", ":loader:jvmTest")
+        run("make", "test")
+        python = output(bootstrap, "python/tools/prepare_runtime.py")
+        run(python, "-m", "unittest", "discover", "-s", "python/src/test/python")
+        run(python, "tests/test_integration.py")
+
     # Keep multiple versions and repeated builds separate from old Gradle metadata.
     release = BUILD / "release"
     distribution = release / ".dist-building"
@@ -260,6 +272,8 @@ def main():
     if final.exists():
         shutil.rmtree(final)
     distribution.rename(final)
+    if verify:
+        run(sys.executable, "tools/verify_release.py", final)
     print(final)
 
 

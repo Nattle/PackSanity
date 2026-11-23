@@ -32,22 +32,47 @@ all platforms. Extract the Maven bundle and configure it as a repository for
 
 ## Build and verify
 
-Pushing a version tag such as `v0.1.2` starts the release build in CI. The workflow
-also accepts manual runs with an explicit version. Download the completed bundles
-from the workflow run and attach them to a GitHub Release for the matching tag.
-[Release workflow](../.github/workflows/build-release.yml)
-
-A full build from source requires macOS with Xcode, JDK 21, Meson, Ninja, Python 3 with pip, and
-Android SDK 37 with build tools 37.0.0, NDK 27.3.13750724, and CMake 3.22.1.
-The verifier requires Python 3.12 or newer.
+Build the mobile and macOS bundles locally on macOS with Xcode, JDK 21, Meson, Ninja,
+Python 3.13 with pip, and Android SDK 37 with build tools 37.0.0, NDK 27.3.13750724,
+and CMake 3.22.1. Set `JAVA_HOME` to the JDK installation.
 
 ```sh
 export ANDROID_HOME=/path/to/android/sdk
-python3 tools/build_release.py --version 0.1.2
-python3 tools/verify_release.py build/release/dist
+./scripts/release.sh --version 0.1.2
 ```
 
-The verifier checks hashes and uses the artifacts in a temporary consumer project.
-Pass `--android-device SERIAL` or `--ios-simulator UUID` to run the matching native
-runtime smoke check. Use `build_release.py --host-only` for just the host Lua bundle.
-Include both manifests in the release. Upload the Linux host manifest as `manifest-linux.json`.
+The script runs the source tests, writes the bundles to `build/release/dist`, and
+verifies their checksums and integration with a temporary consumer project. For
+device or simulator smoke tests, run `python3.13 tools/verify_release.py build/release/dist`
+with `--android-device SERIAL` or `--ios-simulator UUID`.
+
+On an x86_64 Linux machine or VM, check out the same commit and run
+`./scripts/release.sh --version 0.1.2 --host-only`. With a C compiler, JDK 21,
+Meson, and Ninja installed, it builds and tests the Lua and JNI libraries and writes
+the bundle and manifest to `build/release/dist-host-linux-x86_64`.
+
+The release workflow runs on manual dispatch. Select `mobile`, `linux-host`, or
+`all` and download the resulting artifacts. To build just the Linux bundle for a
+pushed tag, dispatch the [release workflow](../.github/workflows/build-release.yml)
+at that tag.
+
+```sh
+gh workflow run build-release.yml --ref v0.1.2 -f version=0.1.2 -f target=linux-host
+```
+
+## Stage the release
+
+Build both sets of bundles from a clean checkout of the same commit and push its
+version tag. Copy the Linux output directory alongside the mobile and macOS
+output, then use the authenticated GitHub CLI to create a draft release with both
+manifests and all archives.
+
+```sh
+version=0.1.2
+dist=build/release/dist
+linux_dist=build/release/dist-host-linux-x86_64
+cp "$linux_dist/manifest.json" "$linux_dist/manifest-linux.json"
+gh release create "v$version" --draft --verify-tag --title "PackSanity $version" \
+  "$dist"/packsanity-"$version"-*.tar.gz "$dist/manifest.json" \
+  "$linux_dist/packsanity-$version-lua-linux-x86_64.tar.gz" "$linux_dist/manifest-linux.json"
+```

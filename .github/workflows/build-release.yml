@@ -1,33 +1,38 @@
 name: Build PackSanity release candidate
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-[0-9a-zA-Z]*'
   workflow_dispatch:
     inputs:
       version:
         description: Release version, for example 0.1.0
         required: true
         type: string
+      target:
+        description: Release bundles to build
+        default: all
+        type: choice
+        options:
+          - all
+          - mobile
+          - linux-host
 
 permissions:
   contents: read
 
 env:
-  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+  RELEASE_VERSION: ${{ inputs.version }}
 
 jobs:
   mobile:
+    if: inputs.target != 'linux-host'
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
@@ -36,34 +41,28 @@ jobs:
       - run: |
           python -m pip install meson ninja
           sdkmanager 'ndk;27.3.13750724' 'cmake;3.22.1' 'platforms;android-37.0' 'build-tools;37.0.0'
-      - run: |
-          ./gradlew spotlessCheck :loader:jvmTest
-          make test
-          python="$(python python/tools/prepare_runtime.py)"
-          PACKSANITY_TEST_JAVA_HOME="$JAVA_HOME" "$python" -m unittest discover -s python/src/test/python
-          "$python" tests/test_integration.py
-      - run: python tools/build_release.py --version "${RELEASE_VERSION#v}"
-      - run: python tools/verify_release.py build/release/dist
-      - uses: actions/upload-artifact@v4
+      - run: scripts/release.sh --version "${RELEASE_VERSION#v}"
+      - uses: actions/upload-artifact@v6
         with:
           name: packsanity-mobile-and-macos
           path: build/release/dist
           if-no-files-found: error
 
   linux-host:
+    if: inputs.target != 'mobile'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - run: python -m pip install meson ninja
-      - run: python tools/build_release.py --version "${RELEASE_VERSION#v}" --host-only
-      - uses: actions/upload-artifact@v4
+      - run: scripts/release.sh --version "${RELEASE_VERSION#v}" --host-only
+      - uses: actions/upload-artifact@v6
         with:
           name: packsanity-linux-host
           path: build/release/dist-host-linux-x86_64
