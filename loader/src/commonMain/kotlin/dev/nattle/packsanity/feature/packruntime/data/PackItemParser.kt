@@ -7,6 +7,34 @@ import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerItemKind
 import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerItemStage
 import kotlinx.serialization.json.JsonPrimitive
 
+internal fun List<TrackerItem>.repeatedItemIdPrefix(): String =
+    generateSequence("packsanity-item/") { "$it/" }
+        .first { prefix -> none { it.id.startsWith(prefix) } }
+
+internal fun repeatedItemIdStem(prefix: String, itemIndex: Int): String = "$prefix$itemIndex/"
+
+internal fun List<RawItem>.toTrackerItems(
+    path: String,
+    allocatedIds: MutableSet<String> = mutableSetOf(),
+    startIndex: Int = 0,
+): List<TrackerItem> {
+    val group = path.substringAfter("items/").substringBeforeLast('.')
+    return mapIndexed { index, raw ->
+        val item = raw.toDomain(startIndex + index, group, path)
+        if (allocatedIds.add(item.id)) {
+            item
+        } else {
+            // Multiple objects in a single registration may provide the same code.
+            val id =
+                item.codes.firstOrNull(allocatedIds::add)
+                    ?: generateSequence(2) { it + 1 }
+                        .map { "${item.id}#$it" }
+                        .first(allocatedIds::add)
+            item.copy(id = id)
+        }
+    }
+}
+
 internal fun RawItem.toDomain(index: Int, sourceGroup: String, sourcePath: String): TrackerItem {
     val itemName = name ?: "Item $index"
     val effectiveStages = effectiveStages()

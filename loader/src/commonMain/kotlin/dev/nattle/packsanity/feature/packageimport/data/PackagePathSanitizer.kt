@@ -4,8 +4,7 @@ class PackagePathSanitizer {
     fun sanitize(path: String): Result<String> {
         val normalized = path.replace('\\', '/').replace(Regex("/+"), "/").trim()
         if (normalized.isEmpty()) return Result.failure(UnsafePackagePathException(path))
-        if (normalized.startsWith("/") || normalized.startsWith("//"))
-            return Result.failure(UnsafePackagePathException(path))
+        if (normalized.startsWith("/")) return Result.failure(UnsafePackagePathException(path))
         if (Regex("^[A-Za-z]:").containsMatchIn(normalized))
             return Result.failure(UnsafePackagePathException(path))
 
@@ -19,33 +18,28 @@ class PackagePathSanitizer {
 
     fun stripCommonRoot(paths: Collection<String>): Map<String, String> {
         val safePaths = paths.mapNotNull { sanitize(it).getOrNull() }
-        val manifests = safePaths.filter { it == "manifest.json" || it.endsWith("/manifest.json") }
-        if (manifests.size == 1) {
-            val manifest = manifests.single()
+        val manifests = safePaths.filter {
+            it.substringAfterLast('/').equals("manifest.json", ignoreCase = true)
+        }
+        val shallowest = manifests.minOfOrNull { path -> path.count { it == '/' } }
+        if (shallowest != null) {
+            val manifest =
+                manifests.singleOrNull { path -> path.count { it == '/' } == shallowest }
+                    ?: return safePaths.associateWith { it }
             val packRoot = manifest.substringBeforeLast('/', missingDelimiterValue = "")
-            if (packRoot.isNotEmpty()) {
-                val prefix = "$packRoot/"
-                return safePaths
-                    .mapNotNull { path ->
-                        path
-                            .takeIf { it.startsWith(prefix) }
-                            ?.let { path to it.removePrefix(prefix) }
-                    }
-                    .toMap()
-            }
+            if (packRoot.isEmpty()) return safePaths.associateWith { it }
+            val prefix = "$packRoot/"
+            return safePaths
+                .filter { it.startsWith(prefix) }
+                .associateWith { it.removePrefix(prefix) }
         }
         var normalizedPaths = safePaths
         while (true) {
-            val contentPaths =
-                normalizedPaths
-                    .filterNot { it.endsWith("/") }
-                    .filterNot { it.isArchiveMetadataPath() }
+            val contentPaths = normalizedPaths.filterNot { it.isArchiveMetadataPath() }
             if (contentPaths.isEmpty()) break
 
             val firstSegments =
-                contentPaths
-                    .mapNotNull { it.substringBefore("/", missingDelimiterValue = "") }
-                    .toSet()
+                contentPaths.map { it.substringBefore("/", missingDelimiterValue = "") }.toSet()
             if (firstSegments.size != 1) break
 
             val root = firstSegments.single()

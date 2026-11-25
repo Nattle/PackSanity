@@ -47,6 +47,6 @@ class LuaPackSourceTest {
                 )
             )
 
-        assertEquals(setOf("dash", "jump", "climb"), codes.toLuaCodeSet())
+        assertEquals(setOf("dash", "jump", "climb"), codes.toPackCodeSet())
     }
 }

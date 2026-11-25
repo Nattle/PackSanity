@@ -1,18 +1,16 @@
 package dev.nattle.packsanity.feature.packruntime.data
 
 import dev.nattle.packsanity.core.json.JsoncNormalizer
-import dev.nattle.packsanity.core.json.PopJson
+import dev.nattle.packsanity.core.json.PackJson
 import dev.nattle.packsanity.core.logging.PopLogger
 import dev.nattle.packsanity.core.logging.createPlatformLogger
 import dev.nattle.packsanity.feature.packageimport.domain.PackageArchive
-import dev.nattle.packsanity.feature.packruntime.data.schema.RawItem
 import dev.nattle.packsanity.feature.packruntime.data.schema.RawSettings
 import dev.nattle.packsanity.feature.packruntime.domain.LuaPackRuntime
 import dev.nattle.packsanity.feature.packruntime.domain.LuaPackRuntimeFactory
 import dev.nattle.packsanity.feature.packruntime.domain.model.LoadedTrackerPackage
 import dev.nattle.packsanity.feature.packruntime.domain.model.PackageLoadProgress
 import kotlin.time.TimeSource
-import kotlinx.serialization.builtins.ListSerializer
 
 class LuaPackRuntimeLoader(
     private val logger: PopLogger = createPlatformLogger(),
@@ -20,48 +18,6 @@ class LuaPackRuntimeLoader(
     private val frameTimeSource: TimeSource = TimeSource.Monotonic,
     private val runtimeFactory: LuaPackRuntimeFactory,
 ) {
-    /**
-     * Finds literal registrations before the disposable runtime is booted. This gives that runtime
-     * lookup objects for support files outside the conventional pack directories. Runtime discovery
-     * remains authoritative for conditional and computed registrations.
-     */
-    suspend fun literalRegistrations(
-        archive: PackageArchive,
-        activeVariantUid: String,
-        variantUids: Set<String>,
-    ): LuaPackRegistrations {
-        val paths =
-            archive
-                .listEntries()
-                .asSequence()
-                .filterNot { it.isDirectory }
-                .map { it.normalizedPath }
-                .filter { it.endsWith(LUA_EXTENSION, ignoreCase = true) }
-                .mapNotNull { path ->
-                    when {
-                        path.startsWith("$activeVariantUid/") ->
-                            path.removePrefix("$activeVariantUid/")
-                        path.substringBefore('/') in variantUids -> null
-                        else -> path
-                    }
-                }
-                .distinct()
-                .toList()
-        val events = buildList {
-            paths.forEach { path ->
-                ADD_FILE_PATTERN.findAll(archive.readText(path, activeVariantUid).orEmpty())
-                    .forEach { match ->
-                        LuaPackFileKind.fromWireName(match.groupValues[1].lowercase())?.let { kind
-                            ->
-                            add(LuaPackLoadEvent(kind, match.groupValues[3]))
-                        }
-                    }
-            }
-        }
-        logger.info("Found ${events.size} literal Lua registrations before runtime discovery")
-        return LuaPackRegistrations(events)
-    }
-
     /**
      * Runs pack initialization in a disposable sandbox to learn the files the selected variant
      * actually registers. PopTracker's Tracker:Add* calls, rather than folder contents, define a
@@ -107,11 +63,36 @@ class LuaPackRuntimeLoader(
         preloadedEvents: List<LuaPackLoadEvent> = emptyList(),
         progressStage: String? = null,
         onProgress: (PackageLoadProgress) -> Unit = {},
+    ): Result<LuaPackSession> =
+        loadWithDefinitions(
+            archive,
+            activeVariantUid,
+            loadedPackage,
+            preloadedEvents,
+            progressStage,
+            onProgress,
+        )
+
+    internal suspend fun loadWithDefinitions(
+        archive: PackageArchive,
+        activeVariantUid: String,
+        loadedPackage: LoadedTrackerPackage?,
+        preloadedEvents: List<LuaPackLoadEvent>,
+        progressStage: String?,
+        onProgress: (PackageLoadProgress) -> Unit,
+        definitionPaths: LuaDefinitionPaths? = null,
     ): Result<LuaPackSession> = runCatching {
         val initSource =
             checkNotNull(archive.readText(INIT_PATH, activeVariantUid)) {
                 "Pack does not contain $INIT_PATH"
             }
+        val definitions =
+            loadedPackage
+                ?: if (archive.exists("manifest.json", activeVariantUid)) {
+                    PackSanityPackParser(jsoncNormalizer, logger = logger)
+                        .loadForLuaDiscovery(archive, activeVariantUid, preloadedEvents)
+                        .getOrThrow()
+                } else null
         val runtime = runtimeFactory.create()
         try {
             runtime.execute(popTrackerHostBootstrap(), "@packsanity/poptracker_host.lua")
@@ -119,7 +100,7 @@ class LuaPackRuntimeLoader(
                     archive,
                     logger,
                     activeVariantUid,
-                    loadedPackage?.pack?.variants?.map { it.uid }.orEmpty(),
+                    definitions?.pack?.variants?.map { it.uid }.orEmpty(),
                     progressStage,
                     onProgress,
                 )
@@ -132,7 +113,7 @@ class LuaPackRuntimeLoader(
             )
             configureTrackerSettings(archive, activeVariantUid, runtime)
             val variantFlags =
-                loadedPackage
+                definitions
                     ?.pack
                     ?.variants
                     ?.firstOrNull { it.uid == activeVariantUid }
@@ -144,8 +125,12 @@ class LuaPackRuntimeLoader(
                     "${("apmanual" in variantFlags || "aphintgame" in variantFlags)}",
                 "@packsanity/archipelago_capabilities.lua",
             )
-            loadedPackage?.let { parsed ->
-                runtime.execute(parsed.toLuaObjectSeed(), "@packsanity/pack_objects.lua")
+            definitions?.let { parsed ->
+                val paths = definitionPaths ?: archive.luaDefinitionPaths(activeVariantUid)
+                runtime.execute(
+                    parsed.toLuaObjectSeed(paths, activeVariantUid),
+                    "@packsanity/pack_objects.lua",
+                )
             }
             preloadedEvents.forEach { event ->
                 runtime.execute(
@@ -156,7 +141,7 @@ class LuaPackRuntimeLoader(
                 )
             }
             val variantUids =
-                loadedPackage?.pack?.variants?.mapTo(mutableSetOf()) { it.uid }.orEmpty()
+                definitions?.pack?.variants?.mapTo(mutableSetOf()) { it.uid }.orEmpty()
             val modulePaths =
                 archive
                     .listEntries()
@@ -164,14 +149,7 @@ class LuaPackRuntimeLoader(
                     .filterNot { it.isDirectory }
                     .map { it.normalizedPath }
                     .filter { it.endsWith(LUA_EXTENSION, ignoreCase = true) }
-                    .mapNotNull { path ->
-                        when {
-                            path.startsWith("$activeVariantUid/") ->
-                                path.removePrefix("$activeVariantUid/")
-                            path.substringBefore('/') in variantUids -> null
-                            else -> path
-                        }
-                    }
+                    .mapNotNull { it.effectiveVariantPath(activeVariantUid, variantUids) }
                     .filterNot { it == INIT_PATH }
                     .distinct()
                     .toList()
@@ -182,45 +160,17 @@ class LuaPackRuntimeLoader(
                 }
             }
             modules.forEach { (path, source) ->
-                val canonicalName = path.dropLast(LUA_EXTENSION.length)
                 runtime.execute(
-                    deferredModulePreload(canonicalName, source, "@$path"),
+                    deferredModulePreload(path.dropLast(LUA_EXTENSION.length), source, "@$path"),
                     "@packsanity/module_preload.lua",
                 )
-                moduleAliases(canonicalName).forEach { alias ->
-                    runtime.execute(
-                        "package.preload[${alias.toLuaSeedLiteral()}] = function() " +
-                            "return require(${canonicalName.toLuaSeedLiteral()}) end",
-                        "@packsanity/module_alias.lua",
-                    )
-                }
             }
-            // Packs may register support items from Lua (for example the recent-items feed)
-            // outside the parser's items/ directory. During the discovery pass those files are
-            // absent from the provisional package, so seed only the unparsed objects before
-            // init.lua runs. The final package already contains every registered item.
-            registeredItemSeed(
-                    archive = archive,
-                    luaSources = modules.values + initSource,
-                    activeVariantUid = activeVariantUid,
-                    knownItemPaths =
-                        loadedPackage?.items.orEmpty().mapNotNull { it.sourcePath }.toSet(),
-                )
-                .takeIf(String::isNotBlank)
-                ?.let { runtime.execute(it, "@packsanity/lua_registered_items.lua") }
-            val fallbackProviderCounts =
-                if (loadedPackage == null) {
-                    seedInitialProviderCounts(
-                        archive,
-                        modules.values + initSource,
-                        activeVariantUid,
-                    )
-                } else {
-                    emptyMap()
+            val moduleNames = modules.keys.map { it.dropLast(LUA_EXTENSION.length) }
+            val aliases =
+                moduleAliases(moduleNames).entries.joinToString("\n") { (alias, name) ->
+                    "PackSanityRegisterModuleAlias(${alias.toLuaSeedLiteral()},${name.toLuaSeedLiteral()})"
                 }
-            fallbackProviderCounts.forEach { (code, count) ->
-                runtime.setProviderCount(code, count)
-            }
+            if (aliases.isNotEmpty()) runtime.execute(aliases, "@packsanity/module_aliases.lua")
             if (progressStage != null) {
                 onProgress(PackageLoadProgress(progressStage, "Running pack scripts"))
             }
@@ -233,7 +183,7 @@ class LuaPackRuntimeLoader(
             }
             runtime.execute("PackSanityRunFrame()", "@packsanity/initial_frame.lua")
             logger.info("Lua pack entrypoint executed")
-            LuaPackSession(runtime, fallbackProviderCounts, frameTimeSource, logger)
+            LuaPackSession(runtime, frameTimeSource, logger)
         } catch (error: Throwable) {
             logger.error("Lua pack startup failed", error)
             runtime.close()
@@ -248,13 +198,13 @@ class LuaPackRuntimeLoader(
      * with its original source path and error.
      */
     private fun deferredModulePreload(name: String, source: String, chunkName: String): String =
-        "package.preload[${name.toLuaSeedLiteral()}] = function(...) " +
-            "local chunk, loadError = load(${source.toLuaSeedLiteral()}, " +
+        "PackSanityRegisterModule(${name.toLuaSeedLiteral()}, function(...) " +
+            "local chunk, loadError = load(${source.removePrefix("\uFEFF").toLuaSeedLiteral()}, " +
             "${chunkName.toLuaSeedLiteral()}, 't'); " +
-            "if chunk == nil then error(loadError) end; return chunk(...) end"
+            "if chunk == nil then error(loadError) end; return chunk(...) end)"
 
     private fun executeScript(source: String, chunkName: String, moduleName: String): String =
-        "local chunk, loadError = load(${source.toLuaSeedLiteral()}, " +
+        "local chunk, loadError = load(${source.removePrefix("\uFEFF").toLuaSeedLiteral()}, " +
             "${chunkName.toLuaSeedLiteral()}, 't'); " +
             "if chunk == nil then error(loadError) end; chunk(${moduleName.toLuaSeedLiteral()})"
 
@@ -264,8 +214,7 @@ class LuaPackRuntimeLoader(
         runtime: LuaPackRuntime,
     ) {
         val source = archive.readText(SETTINGS_PATH, activeVariantUid) ?: return
-        val settings =
-            PopJson.decodeFromString<RawSettings>(jsoncNormalizer.normalize(source).getOrThrow())
+        val settings = PackJson.decodeFromString<RawSettings>(jsoncNormalizer.prepare(source))
         settings.allowDeferredLogicUpdate?.let { allowDeferredLogicUpdate ->
             runtime.execute(
                 "Tracker.AllowDeferredLogicUpdate=$allowDeferredLogicUpdate",
@@ -277,94 +226,27 @@ class LuaPackRuntimeLoader(
         }
     }
 
-    private suspend fun seedInitialProviderCounts(
-        archive: PackageArchive,
-        luaSources: Collection<String>,
-        activeVariantUid: String,
-    ): Map<String, Int> =
-        luaSources
-            .flatMap { source ->
-                ADD_ITEMS_PATTERN.findAll(source).map { it.groupValues[2] }.toList()
-            }
-            .distinct()
-            .flatMap { path ->
-                val source = archive.readText(path, activeVariantUid) ?: return@flatMap emptyList()
-                runCatching {
-                    val normalized = jsoncNormalizer.normalize(source).getOrThrow()
-                    PopJson.decodeFromString(ListSerializer(RawItem.serializer()), normalized)
-                }
-                    .getOrElse {
-                        logger.warn(
-                            "Ignoring unreadable Lua-registered item file during discovery: $path"
-                        )
-                        emptyList()
+    private fun moduleAliases(moduleNames: List<String>): Map<String, String> {
+        val aliases = linkedMapOf<String, String>()
+        // PopTracker tries a file and then the directory's init script under each root.
+        for (root in listOf("scripts/", "")) {
+            for (suffix in listOf("", "/init")) {
+                moduleNames
+                    .filter { it.startsWith(root) && it.removePrefix(root).endsWith(suffix) }
+                    .forEach { path ->
+                        val module = path.removePrefix(root).removeSuffix(suffix)
+                        aliases.getOrPut(module) { path }
+                        aliases.getOrPut(module.replace('/', '.')) { path }
                     }
             }
-            .flatMap { item ->
-                when {
-                    item.type == "toggle" && item.initialActiveState -> item.codes.toLuaCodeSet()
-                    item.type == "static" -> item.codes.toLuaCodeSet()
-                    item.type == "progressive" && !item.allowDisabled ->
-                        item.stages.firstOrNull()?.codes.toLuaCodeSet()
-                    else -> emptySet()
-                }
-            }
-            .associateWith { 1 }
-
-    private suspend fun registeredItemSeed(
-        archive: PackageArchive,
-        luaSources: Collection<String>,
-        activeVariantUid: String,
-        knownItemPaths: Set<String>,
-    ): String {
-        val itemPaths =
-            luaSources
-                .flatMap { source ->
-                    ADD_ITEMS_PATTERN.findAll(source).map { it.groupValues[2] }.toList()
-                }
-                .distinct()
-                .filterNot(knownItemPaths::contains)
-        val items = itemPaths.flatMap { path ->
-            val source = archive.readText(path, activeVariantUid) ?: return@flatMap emptyList()
-            runCatching {
-                PopJson.decodeFromString<List<RawItem>>(
-                    jsoncNormalizer.normalize(source).getOrThrow()
-                )
-            }
-                .getOrElse {
-                    logger.warn(
-                        "Ignoring unreadable Lua-registered item file during discovery: $path"
-                    )
-                    emptyList()
-                }
         }
-        if (itemPaths.isNotEmpty()) {
-            logger.info("Seeding ${items.size} Lua-registered items from ${itemPaths.size} files")
-        }
-        return items.toLuaItemSeed()
+        return aliases
     }
-
-    private fun moduleAliases(canonicalName: String): Set<String> = buildSet {
-        add(canonicalName.replace('/', '.'))
-        canonicalName
-            .removePrefix("scripts/")
-            .takeIf { it != canonicalName }
-            ?.let { shortName ->
-                add(shortName)
-                add(shortName.replace('/', '.'))
-            }
-    }
-        .minus(canonicalName)
 
     private companion object {
         const val INIT_PATH = "scripts/init.lua"
         const val SETTINGS_PATH = "settings.json"
         const val INIT_MODULE_NAME = "init"
         const val LUA_EXTENSION = ".lua"
-        val ADD_ITEMS_PATTERN = Regex("""Tracker\s*:\s*AddItems\s*\(\s*(['"])([^'"]+)\1\s*\)""")
-        val ADD_FILE_PATTERN =
-            Regex(
-                """Tracker\s*:\s*Add(Items|Maps|Locations|Layouts|Classes)\s*\(\s*(['"])([^'"]+)\2\s*\)"""
-            )
     }
 }

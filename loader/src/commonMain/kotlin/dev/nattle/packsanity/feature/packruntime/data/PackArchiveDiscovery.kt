@@ -73,20 +73,13 @@ internal fun String.registeredLayoutPatterns(variantUid: String?): List<String> 
         .toList()
 }
 
-internal fun List<String>.preferPackSanityFiles(includeBreakables: Boolean = false): List<String> {
-    val popPaths = filter { path ->
-        path
-            .substringAfterLast('/')
-            .substringBeforeLast('.')
-            .lowercase()
-            .replace("popup", "")
-            .contains("pop")
+internal fun String.effectiveVariantPath(variantUid: String?, variantUids: Set<String>): String? {
+    val first = substringBefore('/')
+    return when {
+        first == variantUid && '/' in this -> substringAfter('/')
+        first in variantUids -> null
+        else -> this
     }
-    if (popPaths.isEmpty()) return this
-    val extraPaths =
-        if (includeBreakables) filter { it.substringAfterLast('/').contains("breakables") }
-        else emptyList()
-    return (popPaths + extraPaths).distinct()
 }
 
 private fun String.matchesLayoutPattern(pattern: String): Boolean {

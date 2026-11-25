@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 
-HARNESS = '''package dev.nattle.packsanity.ut;
+HARNESS = r'''package dev.nattle.packsanity.ut;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
@@ -29,7 +29,7 @@ public class WorkerProbe {
  }
  public static long created() throws Exception { boundary("create"); live.incrementAndGet(); return 1; }
  public static void closed() throws Exception { boundary("close"); live.decrementAndGet(); }
- public static String called() throws Exception { boundary("call"); return "result"; }
+ public static byte[] called(byte[] request) throws Exception { boundary("call"); return request; }
  public static void main(String[] args) throws Exception {
   blocked = args[0];
   if (args.length > 1) failing = blocked;
@@ -38,7 +38,7 @@ public class WorkerProbe {
    try {
     if (blocked.equals("create")) runtime = new PythonNativeRuntime("home", "modules");
     else if (blocked.equals("close")) runtime.close();
-    else check(runtime.updateState("{}").equals("result"), "result lost");
+    else check(runtime.updateState("{\"name\":\"🧭\"}").equals("{\"name\":\"🧭\"}"), "result lost");
    } catch (Throwable value) { error = value; }
    finally { interrupted = Thread.currentThread().isInterrupted(); }
   });
@@ -62,7 +62,7 @@ public class WorkerProbe {
 
 JNI = '''#include <jni.h>
 static jclass probe(JNIEnv *env) { return (*env)->FindClass(env, "dev/nattle/packsanity/ut/WorkerProbe"); }
-JNIEXPORT jlong JNICALL Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCreate(JNIEnv *env, jclass cls, jstring home, jstring modules) {
+JNIEXPORT jlong JNICALL Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCreateUtf8(JNIEnv *env, jclass cls, jbyteArray home, jbyteArray modules) {
  jclass p = probe(env);
  return (*env)->CallStaticLongMethod(env, p, (*env)->GetStaticMethodID(env, p, "created", "()J"));
 }
@@ -70,9 +70,9 @@ JNIEXPORT void JNICALL Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeC
  jclass p = probe(env);
  (*env)->CallStaticVoidMethod(env, p, (*env)->GetStaticMethodID(env, p, "closed", "()V"));
 }
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCall(JNIEnv *env, jclass cls, jlong handle, jint operation, jstring request) {
+JNIEXPORT jbyteArray JNICALL Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCallUtf8(JNIEnv *env, jclass cls, jlong handle, jint operation, jbyteArray request) {
  jclass p = probe(env);
- return (*env)->CallStaticObjectMethod(env, p, (*env)->GetStaticMethodID(env, p, "called", "()Ljava/lang/String;"));
+ return (*env)->CallStaticObjectMethod(env, p, (*env)->GetStaticMethodID(env, p, "called", "([B)[B"), request);
 }'''
 
 

@@ -15,7 +15,6 @@ val generatedHost = layout.buildDirectory.dir("generated/host")
 
 abstract class GenerateHostSource : DefaultTask() {
     @get:InputDirectory abstract val hostDirectory: DirectoryProperty
-    @get:Input abstract val fragmentNames: ListProperty<String>
     @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
 
     @TaskAction
@@ -30,8 +29,11 @@ abstract class GenerateHostSource : DefaultTask() {
                     .replace("\r", "\\r") +
                 "\""
         val chunks =
-            fragmentNames
+            hostDirectory
                 .get()
+                .file("fragments.txt")
+                .asFile
+                .readLines()
                 .joinToString("") {
                     hostDirectory.get().file("$it.lua").asFile.readText()
                 }
@@ -50,19 +52,6 @@ abstract class GenerateHostSource : DefaultTask() {
 val generateHost =
     tasks.register<GenerateHostSource>("generateHost") {
         hostDirectory.set(rootProject.layout.projectDirectory.dir("lua/poptracker_host"))
-        fragmentNames.set(
-            listOf(
-                "registry",
-                "seeded_objects",
-                "object_state",
-                "providers",
-                "script_host",
-                "pack_io",
-                "calendar",
-                "archipelago",
-                "rule_snapshots",
-            )
-        )
         outputDirectory.set(generatedHost)
     }
 

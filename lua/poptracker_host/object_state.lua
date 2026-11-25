@@ -39,7 +39,7 @@ end
 end
 
 local function find_tracker_object(id)
-local object = tracker_objects[id]
+local object = tracker_objects[id] or item_objects_by_id[id]
 if object ~= nil then return object end
 for _, item in ipairs(custom_items) do
     if item.Name == id then
@@ -60,7 +60,32 @@ object.CurrentStage = (left ~= nil and left.Active and 1 or 0) +
 object.Active = true
 end
 
+local function custom_item_can_provide_code(item, code)
+if type(item.PotentialCodes) == 'table' then
+    for _, potential_code in ipairs(item.PotentialCodes) do
+        if potential_code == code then return true end
+    end
+    return false
+end
+if type(item.CanProvideCodeFunc) == 'function' then
+    local ok, can_provide = pcall(item.CanProvideCodeFunc, item, code)
+    return ok and not not can_provide
+end
+return false
+end
+
 local function notify_item_watchers(object)
+if object.Type == 'custom' then
+    local watched_codes = {}
+    for code in pairs(code_watchers) do table.insert(watched_codes, code) end
+    table.sort(watched_codes)
+    for _, code in ipairs(watched_codes) do
+        if code == '*' or custom_item_can_provide_code(object, code) then
+            run_handlers(code_watchers[code] or {}, code == '*' and '' or code)
+        end
+    end
+    return
+end
 local notified = {}
 local function notify(code)
     if type(code) == 'string' and not notified[code] then
@@ -221,7 +246,7 @@ return changed
 end
 
 function PackSanityChangeItemState(item_id, action)
-return change_seeded_item(find_tracker_object(item_id), action)
+return change_seeded_item(item_objects_by_id[item_id] or find_tracker_object(item_id), action)
 end
 
 function PackSanityChangeLocationSectionState(section_id, action)
@@ -243,22 +268,21 @@ return true
 end
 
 function PackSanityResetTrackerObjects()
+for _, object in pairs(item_objects_by_id) do
+    object.Active = object.__initial_active == true
+    object.CurrentStage = object.__initial_current_stage or 0
+    object.AcquiredCount = object.__initial_acquired_count or 0
+end
 local seen = {}
 for _, object in pairs(tracker_objects) do
-    if not seen[object] then
+    if object.Type == 'location' and not seen[object] then
         seen[object] = true
-        if object.Type == 'location' then
-            object.Active = true
-            object.AvailableChestCount = object.__initial_available_chest_count or object.ChestCount or 0
-            object.__packsanity_reset_accessibility(
-                object.__initial_accessibility_level or AccessibilityLevel.None
-            )
-            object.Highlight = object.__initial_highlight or Highlight.None
-        elseif object.Type ~= 'custom' then
-            object.Active = object.__initial_active == true
-            object.CurrentStage = object.__initial_current_stage or 0
-            object.AcquiredCount = object.__initial_acquired_count or 0
-        end
+        object.Active = true
+        object.AvailableChestCount = object.__initial_available_chest_count or object.ChestCount or 0
+        object.__packsanity_reset_accessibility(
+            object.__initial_accessibility_level or AccessibilityLevel.None
+        )
+        object.Highlight = object.__initial_highlight or Highlight.None
     end
 end
 for _, object in ipairs(composite_items) do sync_composite_state(object) end
@@ -267,7 +291,7 @@ end
 function PackSanityItemStates(ids)
 local records = {}
 for id in string.gmatch(ids or '', '[^\31]+') do
-    local item = find_tracker_object(id)
+    local item = item_objects_by_id[id] or find_tracker_object(id)
     if item ~= nil then
         sync_composite_state(item)
         table.insert(records, id..'\30'..(item.Active and '1' or '0')..'\30'..

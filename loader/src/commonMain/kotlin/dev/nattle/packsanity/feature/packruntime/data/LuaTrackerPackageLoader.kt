@@ -29,54 +29,58 @@ class LuaTrackerPackageLoader(
                 ?: "Unsupported tracker package compatibility level"
         }
         val legacyEvents = archive.legacyLoadEvents(activeVariantUid)
-        val literalRegistrations =
-            runtimeLoader.literalRegistrations(
-                archive = archive,
-                activeVariantUid = activeVariantUid,
-                variantUids = pack.variants.mapTo(mutableSetOf()) { it.uid },
-            )
-        val provisionalObjectEvents =
-            (legacyEvents + literalRegistrations.events).filter { event ->
-                event.kind == LuaPackFileKind.Items || event.kind == LuaPackFileKind.Locations
-            }
+        val candidates = parser.prepareLuaDefinitions(archive, activeVariantUid, legacyEvents)
         val provisionalPackage =
             parser
-                .loadForLuaDiscovery(
-                    archive = archive,
-                    variantUid = activeVariantUid,
-                    additionalObjectEvents = provisionalObjectEvents,
-                )
-                .getOrThrow()
+                .buildLuaDefinitions(pack, candidates, LuaPackRegistrations(legacyEvents))
+                .packageData
         onProgress(PackageLoadProgress("Pre-initializing pack", "Discovering registered files"))
-        val discoveredRegistrations =
+        val discovery =
             runtimeLoader
-                .discoverRegistrations(
+                .loadWithDefinitions(
                     archive,
                     activeVariantUid,
                     provisionalPackage,
-                    preloadedEvents = legacyEvents,
-                    onProgress = onProgress,
+                    legacyEvents,
+                    "Pre-initializing pack",
+                    onProgress,
+                    candidates.paths,
                 )
                 .getOrThrow()
-        val registrations =
-            LuaPackRegistrations(
-                legacyEvents + discoveredRegistrations.events.drop(legacyEvents.size)
-            )
-        onProgress(PackageLoadProgress("Parsing tracker data", "Reading registered files"))
-        val loadedPackage =
-            parser.load(archive, activeVariantUid, registeredPaths = registrations).getOrThrow()
+        val discovered =
+            try {
+                discovery.registeredPaths()
+            } finally {
+                discovery.close()
+            }
+        val runtimeDefinitions = parser.buildLuaDefinitions(pack, candidates, discovered)
+        val definitionIndex = runtimeDefinitions.index
         onProgress(PackageLoadProgress("Initializing pack"))
         val session =
             runtimeLoader
-                .load(
+                .loadWithDefinitions(
                     archive,
                     activeVariantUid,
-                    loadedPackage,
-                    preloadedEvents = legacyEvents,
-                    progressStage = "Initializing pack",
-                    onProgress = onProgress,
+                    runtimeDefinitions.packageData,
+                    legacyEvents,
+                    "Initializing pack",
+                    onProgress,
+                    candidates.paths,
                 )
                 .getOrThrow()
+        val registrations: LuaPackRegistrations
+        val loadedPackage: LoadedTrackerPackage
+        try {
+            registrations = session.registeredPaths()
+            onProgress(PackageLoadProgress("Parsing tracker data", "Reading registered files"))
+            loadedPackage =
+                parser
+                    .loadRegistered(archive, activeVariantUid, registrations, definitionIndex)
+                    .getOrThrow()
+        } catch (error: Throwable) {
+            session.close()
+            throw error
+        }
         LoadedLuaTrackerPackage(
             loadedPackage = loadedPackage,
             luaSession = session,
@@ -84,10 +88,11 @@ class LuaTrackerPackageLoader(
             resolver =
                 LuaRegisteredPackageResolver { updatedRegistrations ->
                     parser
-                        .load(
-                            archive = archive,
-                            variantUid = activeVariantUid,
-                            registeredPaths = updatedRegistrations,
+                        .loadRegistered(
+                            archive,
+                            activeVariantUid,
+                            updatedRegistrations,
+                            definitionIndex,
                         )
                         .getOrThrow()
                 },

@@ -1,5 +1,6 @@
 """Server-authoritative entrance pairing, discovery, and stored-data reconnection."""
 from __future__ import annotations
+from copy import deepcopy
 from typing import Any, TYPE_CHECKING
 from packsanity_ut_models import TrackerSession, tracker_setting
 if TYPE_CHECKING:
@@ -185,15 +186,14 @@ def _apply_stored_data(session: TrackerSession, values: dict[str, Any]) -> None:
         session.stored_data = {}
     entrance_keys = set(_resolved_entrance_keys(world, session))
     for key, value in values.items():
-        changed = session.stored_data.get(key) != value
-        session.stored_data[key] = value
+        changed = key not in session.stored_data or session.stored_data[key] != value
         if changed and key in entrance_keys and callable(reconnect):
             disconnected = (
                 [exit for exit in session.multiworld.get_entrances(session.player)
                  if exit.connected_region is None]
                 if value else []
             )
-            reconnect(key, value)
+            reconnect(key, deepcopy(value))
             newly_connected = [exit for exit in disconnected if exit.connected_region is not None]
             if newly_connected:
                 if session.entrances_by_storage_key is None:
@@ -204,4 +204,5 @@ def _apply_stored_data(session: TrackerSession, values: dict[str, Any]) -> None:
                 session.entrance_pairings_by_storage_key[key] = dict(
                     _server_entrance_pairings(world, session) or {}
                 )
+        session.stored_data[key] = value
 

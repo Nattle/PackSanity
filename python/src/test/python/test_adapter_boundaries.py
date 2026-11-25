@@ -19,6 +19,18 @@ import packsanity_ut_upstream as upstream
 
 
 class PackageGateTest(unittest.TestCase):
+    def test_pinned_option_rolling_is_available_to_world_imports(self):
+        from Generate import roll_settings
+        from Options import Toggle
+        from worlds import AutoWorldRegister
+
+        world = types.SimpleNamespace(options_dataclass=types.SimpleNamespace(type_hints={"extra": Toggle}))
+        with mock.patch.dict(AutoWorldRegister.world_types, {"Example": world}):
+            options = roll_settings({"game": "Example", "Example": {"extra": 1}})
+
+        self.assertEqual("Example", options.game)
+        self.assertEqual(1, options.extra.value)
+
     def test_dependency_gate_matches_shipped_runtime_versions(self):
         runtime_root = Path(__file__).resolve().parents[3]
         locked = json.loads((runtime_root / "runtime.lock.json").read_text())["purePythonDependencies"]
@@ -57,6 +69,20 @@ class PackageGateTest(unittest.TestCase):
             with self.assertRaisesRegex(TrackerAdapterError, "not bundled.*missing_dependency"):
                 MobileUniversalTracker().load_world(str(path), "example")
 
+    def test_manifest_gates_run_before_import(self):
+        for fields, message in (
+            ({"compatible_version": 999}, "too new"),
+            ({"compatible_version": 7, "minimum_ap_version": "0.7.0"}, "requires Archipelago 0.7.0"),
+            ({"maximum_ap_version": "0.6.7"}, "supports Archipelago 0.6.7"),
+        ):
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "example.apworld"
+                with zipfile.ZipFile(path, "w") as archive:
+                    archive.writestr("example/__init__.py", "raise AssertionError('must not import')")
+                    archive.writestr("example/archipelago.json", json.dumps({"game": "Example", **fields}))
+                with self.assertRaisesRegex(TrackerAdapterError, message):
+                    MobileUniversalTracker().load_world(str(path), "example")
+
     def test_world_import_receives_manifest_and_world_version(self):
         registry = types.SimpleNamespace(world_types={})
         source = """from worlds import AutoWorld
@@ -72,12 +98,7 @@ AutoWorld.AutoWorldRegister.world_types["Example"] = ExampleWorld
                 with zipfile.ZipFile(path, "w") as archive:
                     archive.writestr("example/__init__.py", source)
                     archive.writestr(manifest_path, json.dumps(manifest))
-                with (
-                    mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", registry, create=True),
-                    mock.patch.dict("sys.modules", {"Utils": types.SimpleNamespace(
-                        tuplize_version=lambda value: tuple(map(int, value.split(".")))
-                    )}),
-                ):
+                with mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", registry, create=True):
                     try:
                         metadata = MobileUniversalTracker().load_world(str(path), "example")
                         world = registry.world_types["Example"]
@@ -123,7 +144,7 @@ class ReconstructionContractTest(unittest.TestCase):
         with (
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
             mock.patch.object(tracker, "_build_multiworld", side_effect=build),
-            mock.patch.object(tracker, "update", return_value={"ok": True}),
+            mock.patch.object(tracker, "_project_update", return_value={"ok": True}),
         ):
             self.assertEqual({"ok": True}, tracker.initialize("Example", 4, "Player", {"seed": 9}))
         self.assertEqual([
@@ -174,7 +195,7 @@ class ReconstructionContractTest(unittest.TestCase):
         with (
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
             mock.patch.object(tracker, "_build_multiworld", side_effect=generate) as build,
-            mock.patch.object(tracker, "update", return_value={}),
+            mock.patch.object(tracker, "_project_update", return_value={}),
         ):
             tracker.initialize("Example", 4, "Player", {"seed": 9})
         self.assertEqual([{"seed": 9}, {"from_instance": {"seed": 9}}], [call.args[3] for call in build.call_args_list])
@@ -190,7 +211,7 @@ class ReconstructionContractTest(unittest.TestCase):
         with (
             mock.patch.object(adapter.AutoWorld, "AutoWorldRegister", types.SimpleNamespace(world_types={"Example": World}), create=True),
             mock.patch.object(tracker, "_build_multiworld", return_value=multiworld) as build,
-            mock.patch.object(tracker, "update", return_value={}),
+            mock.patch.object(tracker, "_project_update", return_value={}),
         ):
             tracker.initialize("Example", 4, "Player", slot_data)
         build.assert_called_once_with("Example", "Player", {}, slot_data)
@@ -385,6 +406,43 @@ class LiveResultContractTest(unittest.TestCase):
             self.assertEqual({}, self.session.slot_data)
             self.tracker.update([], set(), {9}, slot_data={"option": 1})
         self.assertIs(updated, self.tracker._session)
+
+    def test_failed_entrance_hook_rebuilds_and_retries_same_storage(self):
+        old_exit = types.SimpleNamespace(connected_region=None)
+        new_exit = types.SimpleNamespace(connected_region=None)
+        calls = []
+
+        def reconnect(exit, fail):
+            def apply(key, value):
+                calls.append((key, value))
+                exit.connected_region = self.location.parent_region
+                if fail:
+                    raise RuntimeError("entrance update failed after connecting")
+            return apply
+
+        self.world.found_entrances_datastorage_key = "Door:{player}"
+        self.world.reconnect_found_entrances = reconnect(old_exit, True)
+        self.multiworld.get_entrances = lambda player: [old_exit]
+        self.multiworld.get_reachable_locations = lambda state, player: []
+        new_world = copy.copy(self.world)
+        new_world.reconnect_found_entrances = reconnect(new_exit, False)
+        rebuilt = copy.copy(self.multiworld)
+        rebuilt.worlds = {1: new_world}
+        rebuilt.get_entrances = lambda player: [new_exit]
+        rebuilt.get_reachable_locations = lambda state, player: [self.location] if new_exit.connected_region else []
+        replacement = TrackerSession("Example", 4, "Player", 2, {}, rebuilt)
+        with (
+            mock.patch.object(upstream, "CollectionState", return_value=self.collection_state),
+            mock.patch.object(self.tracker, "_reconstruct_session", return_value=replacement) as rebuild,
+        ):
+            self.assertFalse(self.tracker.update([], set(), {9})["locations"][0]["reachable"])
+            with self.assertRaisesRegex(RuntimeError, "entrance update failed after connecting"):
+                self.tracker.update([], set(), {9}, {"Door:4": True})
+            self.assertEqual({}, self.session.stored_data)
+            result = self.tracker.update([], set(), {9}, {"Door:4": True})
+        rebuild.assert_called_once()
+        self.assertEqual([("Door:4", True), ("Door:4", True)], calls)
+        self.assertTrue(result["locations"][0]["reachable"])
 
     def test_invalid_late_slot_data_does_not_mutate_session(self):
         self.session.slot_data = {"metadata": 1}

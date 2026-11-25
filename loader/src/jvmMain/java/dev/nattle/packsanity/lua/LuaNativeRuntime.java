@@ -1,5 +1,6 @@
 package dev.nattle.packsanity.lua;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 public final class LuaNativeRuntime implements AutoCloseable {
@@ -39,72 +40,40 @@ public final class LuaNativeRuntime implements AutoCloseable {
 
     public synchronized void registerModule(String name, String source, String chunkName) {
         checkOpen();
-        Objects.requireNonNull(name, "name");
-        Objects.requireNonNull(source, "source");
-        Objects.requireNonNull(chunkName, "chunkName");
-        throwOnError(nativeRegisterModule(handle, name, source, chunkName));
+        nativeRegisterModuleUtf8(handle, cString(name), cString(source), cString(chunkName));
     }
 
     public synchronized void registerPackFile(String path, byte[] contents) {
         checkOpen();
-        Objects.requireNonNull(path, "path");
-        Objects.requireNonNull(contents, "contents");
-        throwOnError(nativeRegisterPackFile(handle, path, contents));
+        nativeRegisterPackFileUtf8(handle, cString(path), Objects.requireNonNull(contents, "contents"));
     }
 
     public synchronized void execute(String source, String chunkName) {
         checkOpen();
-        Objects.requireNonNull(source, "source");
-        Objects.requireNonNull(chunkName, "chunkName");
-        throwOnError(nativeExecute(handle, source, chunkName));
+        nativeExecuteUtf8(handle, cString(source), cString(chunkName));
     }
 
     public synchronized void setProviderCount(String code, int count) {
         checkOpen();
-        Objects.requireNonNull(code, "code");
-        throwOnError(nativeSetProviderCount(handle, code, count));
+        nativeSetProviderCountUtf8(handle, cString(code), count);
     }
 
     public synchronized boolean callBoolean(String functionName, String argument) {
         checkOpen();
-        Objects.requireNonNull(functionName, "functionName");
-        Objects.requireNonNull(argument, "argument");
-        String result = nativeCallBoolean(handle, functionName, argument);
-        if (result == null) {
-            throw new IllegalStateException("Lua call returned no result");
-        }
-        if (result.startsWith("error:")) {
-            throw new IllegalStateException(result.substring("error:".length()));
-        }
-        return "true".equals(result);
+        return nativeCallNumber(handle, cString(functionName), argument.getBytes(StandardCharsets.UTF_8), true) != 0;
     }
 
     public synchronized int callInteger(String functionName, String argument) {
         checkOpen();
-        Objects.requireNonNull(functionName, "functionName");
-        Objects.requireNonNull(argument, "argument");
-        String result = nativeCallInteger(handle, functionName, argument);
-        if (result == null) {
-            throw new IllegalStateException("Lua call returned no result");
-        }
-        if (result.startsWith("error:")) {
-            throw new IllegalStateException(result.substring("error:".length()));
-        }
-        return Integer.parseInt(result);
+        return nativeCallNumber(handle, cString(functionName), argument.getBytes(StandardCharsets.UTF_8), false);
     }
 
     public synchronized String callString(String functionName, String argument) {
         checkOpen();
-        Objects.requireNonNull(functionName, "functionName");
-        Objects.requireNonNull(argument, "argument");
-        String result = nativeCallString(handle, functionName, argument);
-        if (result == null) {
-            throw new IllegalStateException("Lua call returned no result");
-        }
-        if (result.startsWith("error:")) {
-            throw new IllegalStateException(result.substring("error:".length()));
-        }
-        return result;
+        return new String(
+            nativeCallStringUtf8(handle, cString(functionName), argument.getBytes(StandardCharsets.UTF_8)),
+            StandardCharsets.UTF_8
+        );
     }
 
     @Override
@@ -121,21 +90,19 @@ public final class LuaNativeRuntime implements AutoCloseable {
         }
     }
 
-    private static void throwOnError(String error) {
-        if (error != null) {
-            throw new IllegalStateException(error);
-        }
+    private static byte[] cString(String value) {
+        if (value.indexOf(0) >= 0) throw new IllegalArgumentException("Lua source or name contains a NUL");
+        return value.getBytes(StandardCharsets.UTF_8);
     }
 
     private static native long nativeCreate(long memoryLimitBytes, long instructionLimit);
     private static native void nativeBeginRefresh(long handle, long instructionLimit);
     private static native void nativeEndRefresh(long handle);
     private static native void nativeClose(long handle);
-    private static native String nativeRegisterModule(long handle, String name, String source, String chunkName);
-    private static native String nativeRegisterPackFile(long handle, String path, byte[] contents);
-    private static native String nativeExecute(long handle, String source, String chunkName);
-    private static native String nativeSetProviderCount(long handle, String code, int count);
-    private static native String nativeCallBoolean(long handle, String functionName, String argument);
-    private static native String nativeCallInteger(long handle, String functionName, String argument);
-    private static native String nativeCallString(long handle, String functionName, String argument);
+    private static native void nativeRegisterModuleUtf8(long handle, byte[] name, byte[] source, byte[] chunkName);
+    private static native void nativeRegisterPackFileUtf8(long handle, byte[] path, byte[] contents);
+    private static native void nativeExecuteUtf8(long handle, byte[] source, byte[] chunkName);
+    private static native void nativeSetProviderCountUtf8(long handle, byte[] code, int count);
+    private static native int nativeCallNumber(long handle, byte[] functionName, byte[] argument, boolean booleanResult);
+    private static native byte[] nativeCallStringUtf8(long handle, byte[] functionName, byte[] argument);
 }

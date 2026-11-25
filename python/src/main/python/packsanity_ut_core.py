@@ -57,12 +57,6 @@ def replay_inventory(
     slot: int,
     items: Sequence[NetworkItem],
 ) -> tuple[CollectionState, Counter[str]]:
-    known_items = multiworld.worlds[player_id].item_id_to_name
-    for item in items:
-        if item.item > 0 and known_items.get(item.item) is None:
-            raise TrackerAdapterError(
-                f"APWorld '{multiworld.game[player_id]}' does not define item id {item.item}."
-            )
     tracker = SimpleNamespace(
         multiworld=multiworld,
         player_id=player_id,

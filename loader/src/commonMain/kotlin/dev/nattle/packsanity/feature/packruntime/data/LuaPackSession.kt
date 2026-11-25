@@ -10,11 +10,10 @@ import kotlinx.serialization.json.JsonElement
 class LuaPackSession
 internal constructor(
     private val runtime: LuaPackRuntime,
-    private val initialProviderCounts: Map<String, Int> = emptyMap(),
     private val frameTimeSource: TimeSource = TimeSource.Monotonic,
     private val logger: PopLogger = NoOpPopLogger,
 ) {
-    private var appliedProviderCounts: Map<String, Int> = initialProviderCounts
+    private var appliedProviderCounts: Map<String, Int> = emptyMap()
     /** Whether the pack's Archipelago callbacks own live provider counts. */
     var usesArchipelagoItemHandlers = false
         private set
@@ -47,8 +46,7 @@ internal constructor(
     }
 
     fun setProviderCounts(counts: Map<String, Int>) {
-        val effectiveCounts =
-            if (usesArchipelagoItemHandlers) emptyMap() else initialProviderCounts + counts
+        val effectiveCounts = if (usesArchipelagoItemHandlers) emptyMap() else counts
         (appliedProviderCounts.keys + effectiveCounts.keys).forEach { code ->
             val count = effectiveCounts[code] ?: 0
             if (appliedProviderCounts[code] != count) runtime.setProviderCount(code, count)

@@ -8,70 +8,57 @@ import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerLocationSec
 internal fun List<TrackerLocation>.applyDeclaredParents(
     diagnostics: MutableList<String>
 ): List<TrackerLocation> {
-    var roots = this
+    val roots = mutableListOf<TrackerLocation>()
+    val paths = linkedMapOf<String, TrackerLocation>()
+    val attachedChildren = mutableMapOf<String, MutableList<TrackerLocation>>()
 
-    fun findByPath(locations: List<TrackerLocation>, expectedPath: String): TrackerLocation? {
-        fun visit(location: TrackerLocation, parentPath: List<String>): TrackerLocation? {
-            val path = (parentPath + location.name).joinToString("/")
-            if (path == expectedPath) return location
-            return location.children.firstNotNullOfOrNull {
-                visit(it, parentPath + location.name)
+    fun index(location: TrackerLocation, prefix: String) {
+        val path = prefix + location.name
+        paths.getOrPut(path) { location }
+        location.children.forEach { index(it, "$path/") }
+    }
+    for (batch in groupBy { it.sourcePath }.values) {
+        // PopTracker passes the locations already installed before this AddLocations call
+        // to Location::FromJSON as its parent lookup.
+        val registered = batch.map { location ->
+            val declared = location.declaredParent?.removePrefix("@").orEmpty()
+            val match =
+                if (declared.isEmpty()) null
+                else {
+                    paths[declared]?.let { declared to it }
+                        ?: paths.entries.firstOrNull { it.key.endsWith(declared) }?.toPair()
+                }
+            if (match == null) {
+                if (declared.isNotEmpty()) {
+                    diagnostics +=
+                        "Could not resolve location parent '$declared' for '${location.name}'"
+                }
+                roots += location
+                "" to location
+            } else {
+                val (path, parent) = match
+                val child = location.copy(parentId = parent.id)
+                attachedChildren.getOrPut(parent.id, ::mutableListOf) += child
+                "$path/" to child
             }
         }
-        return locations.firstNotNullOfOrNull { visit(it, emptyList()) }
+        registered.forEach { (prefix, location) -> index(location, prefix) }
     }
-
-    fun removeById(
-        locations: List<TrackerLocation>,
-        id: String,
-    ): Pair<List<TrackerLocation>, TrackerLocation?> {
-        var removed: TrackerLocation? = null
-        fun remove(location: TrackerLocation): TrackerLocation? {
-            if (location.id == id) {
-                removed = location
-                return null
-            }
-            val children = location.children.mapNotNull(::remove)
-            return location.copy(children = children)
-        }
-        return locations.mapNotNull(::remove) to removed
-    }
-
-    fun appendChild(
-        locations: List<TrackerLocation>,
-        parentId: String,
-        child: TrackerLocation,
-    ): List<TrackerLocation> = locations.map { location ->
-        when {
-            location.id == parentId ->
-                location.copy(children = location.children + child.copy(parentId = parentId))
-            else -> location.copy(children = appendChild(location.children, parentId, child))
-        }
-    }
-
-    val relocations = roots.filter { it.declaredParent != null }
-    relocations.forEach { location ->
-        val parentPath = location.declaredParent.orEmpty().removePrefix("@")
-        val parent = findByPath(roots, parentPath)
-        if (parent == null) {
-            diagnostics += "Could not resolve location parent '$parentPath' for '${location.name}'"
-            return@forEach
-        }
-        val (withoutLocation, removed) = removeById(roots, location.id)
-        if (removed != null) roots = appendChild(withoutLocation, parent.id, removed)
-    }
-    return roots
+    fun attach(location: TrackerLocation): TrackerLocation =
+        location.copy(
+            children = (location.children + attachedChildren[location.id].orEmpty()).map(::attach)
+        )
+    return roots.map(::attach)
 }
 
-internal fun List<TrackerLocation>.resolveSectionReferences(
-    diagnostics: MutableList<String>,
-    logger: PopLogger,
-): List<TrackerLocation> {
-    val exactSectionsByPath = mutableMapOf<String, MutableList<TrackerLocationSection>>()
-    val sectionsByPath = buildMap {
+/** PopTracker section-match order shared by the model and Lua registration seeds. */
+internal class PackSectionReferenceIndex(locations: List<TrackerLocation>) {
+    private val exactSectionsByPath = mutableMapOf<String, MutableList<TrackerLocationSection>>()
+    private val sectionsByPath = buildMap {
         fun index(location: TrackerLocation, parentPath: List<String>) {
             val path = parentPath + location.name
             location.sections.forEach { section ->
+                if (section.ref != null) return@forEach
                 val fullPath = "${path.joinToString("/")}/${section.name}".referenceKey()
                 exactSectionsByPath.getOrPut(fullPath) { mutableListOf() } += section
                 buildSet {
@@ -80,7 +67,7 @@ internal fun List<TrackerLocation>.resolveSectionReferences(
                     path.indices.forEach { start ->
                         add("${path.drop(start).joinToString("/")}/${section.name}".referenceKey())
                     }
-                    if (location.sections.size == 1 && section.ref == null) {
+                    if (location.sections.size == 1) {
                         add(location.name.referenceKey())
                         add(path.joinToString("/").referenceKey())
                     }
@@ -89,15 +76,37 @@ internal fun List<TrackerLocation>.resolveSectionReferences(
             }
             location.children.forEach { index(it, path) }
         }
-        this@resolveSectionReferences.forEach { index(it, emptyList()) }
+        locations.forEach { index(it, emptyList()) }
     }
-    val sectionsByNormalizedPath =
+    private val sectionsByNormalizedPath =
         sectionsByPath.entries
             .groupBy(
                 keySelector = { (path, _) -> path.referenceMatchKey() },
                 valueTransform = { (_, sections) -> sections },
             )
             .mapValues { (_, sectionGroups) -> sectionGroups.flatten().distinct() }
+
+    fun targets(reference: String): PackSectionReferenceTargets {
+        val key = reference.referenceKey()
+        return PackSectionReferenceTargets(
+            exactSectionsByPath[key].orEmpty(),
+            sectionsByPath[key].orEmpty(),
+            sectionsByNormalizedPath[key.referenceMatchKey()].orEmpty(),
+        )
+    }
+}
+
+internal data class PackSectionReferenceTargets(
+    val exact: List<TrackerLocationSection>,
+    val suffix: List<TrackerLocationSection>,
+    val normalized: List<TrackerLocationSection>,
+)
+
+internal fun List<TrackerLocation>.resolveSectionReferences(
+    diagnostics: MutableList<String>,
+    logger: PopLogger,
+): List<TrackerLocation> {
+    val index = PackSectionReferenceIndex(this)
     val unresolvedReferences = mutableSetOf<String>()
     var normalizedReferenceCount = 0
     var partialReferenceCount = 0
@@ -107,15 +116,10 @@ internal fun List<TrackerLocation>.resolveSectionReferences(
             sections =
                 location.sections.map { section ->
                     val reference = section.ref ?: return@map section
-                    val key = reference.referenceKey()
-                    val exactTarget = exactSectionsByPath[key]?.firstOrNull { it.ref == null }
-                    val directTarget =
-                        exactTarget ?: sectionsByPath[key]?.firstOrNull { it.ref == null }
-                    val normalizedTarget =
-                        sectionsByNormalizedPath[reference.referenceMatchKey()]
-                            ?.filter { candidate -> candidate.ref == null }
-                            ?.distinct()
-                            ?.singleOrNull()
+                    val matches = index.targets(reference)
+                    val exactTarget = matches.exact.firstOrNull()
+                    val directTarget = exactTarget ?: matches.suffix.firstOrNull()
+                    val normalizedTarget = matches.normalized.singleOrNull()
                     val target = directTarget ?: normalizedTarget
                     if (target == null) {
                         unresolvedReferences += reference

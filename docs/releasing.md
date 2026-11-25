@@ -38,7 +38,7 @@ and CMake 3.22.1. Set `JAVA_HOME` to the JDK installation.
 
 ```sh
 export ANDROID_HOME=/path/to/android/sdk
-./scripts/release.sh --version 0.1.2
+./scripts/release.sh --version 0.1.3
 ```
 
 The script runs the source tests, writes the bundles to `build/release/dist`, and
@@ -47,7 +47,7 @@ device or simulator smoke tests, run `python3.13 tools/verify_release.py build/r
 with `--android-device SERIAL` or `--ios-simulator UUID`.
 
 On an x86_64 Linux machine or VM, check out the same commit and run
-`./scripts/release.sh --version 0.1.2 --host-only`. With a C compiler, JDK 21,
+`./scripts/release.sh --version 0.1.3 --host-only`. With a C compiler, JDK 21,
 Meson, and Ninja installed, it builds and tests the Lua and JNI libraries and writes
 the bundle and manifest to `build/release/dist-host-linux-x86_64`.
 
@@ -57,7 +57,7 @@ pushed tag, dispatch the [release workflow](../.github/workflows/build-release.y
 at that tag.
 
 ```sh
-gh workflow run build-release.yml --ref v0.1.2 -f version=0.1.2 -f target=linux-host
+gh workflow run build-release.yml --ref v0.1.3 -f version=0.1.3 -f target=linux-host
 ```
 
 ## Stage the release
@@ -68,7 +68,7 @@ output, then use the authenticated GitHub CLI to create a draft release with bot
 manifests and all archives.
 
 ```sh
-version=0.1.2
+version=0.1.3
 dist=build/release/dist
 linux_dist=build/release/dist-host-linux-x86_64
 cp "$linux_dist/manifest.json" "$linux_dist/manifest-linux.json"

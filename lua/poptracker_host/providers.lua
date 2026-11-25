@@ -1,17 +1,3 @@
-local function custom_item_can_provide_code(item, code)
-if type(item.PotentialCodes) == 'table' then
-    for _, potential_code in ipairs(item.PotentialCodes) do
-        if potential_code == code then return true end
-    end
-    return false
-end
-if type(item.CanProvideCodeFunc) == 'function' then
-    local ok, can_provide = pcall(item.CanProvideCodeFunc, item, code)
-    return ok and not not can_provide
-end
-return false
-end
-
 -- PotentialCodes is a declarative list on PopTracker custom items. Keep an index so bulk
 -- hosted-item snapshots do not scan every custom item once for lookup and again for provider
 -- counts. Items using CanProvideCodeFunc remain evaluated dynamically.
@@ -37,6 +23,8 @@ end
 function Tracker:FindObjectForCode(code)
 local exact = tracker_objects[code]
 if exact ~= nil and not exact.__packsanity_location_placeholder then return exact end
+local reference = find_location_reference(code)
+if reference ~= nil then return reference end
 local section = find_location_suffix(code)
 if section ~= nil then return section end
 if exact ~= nil then return exact end
@@ -118,8 +106,9 @@ function item:Set(property, value)
     if type(property) ~= 'string' then return end
     self.ItemState = self.ItemState or {}
     local previous = self.ItemState[property]
+    if previous == value then return end
     self.ItemState[property] = value
-    if previous ~= value and type(self.PropertyChangedFunc) == 'function' then
+    if type(self.PropertyChangedFunc) == 'function' then
         local ok, error_message = pcall(self.PropertyChangedFunc, self, property, value)
         if not ok then
             table.insert(callback_errors, tostring(error_message))
@@ -127,6 +116,7 @@ function item:Set(property, value)
             return
         end
     end
+    notify_item_changed(self)
 end
 function item:Get(property)
     if type(property) ~= 'string' then return nil end

@@ -13,6 +13,8 @@ from typing import Any
 import zipfile
 import zipimport
 from worlds import AutoWorld
+from worlds.Files import APWorldContainer
+from Utils import tuplize_version, version_tuple
 from packsanity_ut_models import LOGGER, TrackerAdapterError
 from packsanity_ut_requirements import _read_requirements, _requirement_is_available
 
@@ -54,6 +56,7 @@ def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
             "An APWorld is already loaded. Create a new interpreter before switching worlds."
         )
 
+    manifest = _read_world_manifest(path, package_root)
     requirements = _read_requirements(path)
     unavailable = [requirement for requirement in requirements if not _requirement_is_available(requirement)]
     if unavailable:
@@ -74,7 +77,6 @@ def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
         sys.modules[module_name] = module
         with _local_rule_builder_fallback(path, package_root):
             importer.exec_module(module)
-        _apply_world_manifest(path, package_root)
     except TrackerAdapterError:
         raise
     except Exception as error:
@@ -88,6 +90,12 @@ def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
     )
     if not games:
         raise TrackerAdapterError(f"APWorld '{path.name}' did not register a World class.")
+    if manifest is not None:
+        metadata, container = manifest
+        if container.game in games:
+            world_type = AutoWorld.AutoWorldRegister.world_types[container.game]
+            world_type.world_version = container.world_version or tuplize_version("0.0.0")
+            world_type.manifest = metadata
     metadata = {
         "package_root": package_root,
         "games": games,
@@ -104,22 +112,49 @@ def load_world(self, apworld_path: str, package_root: str) -> dict[str, Any]:
     return dict(metadata)
 
 
-def _apply_world_manifest(path: Path, package_root: str) -> None:
-    """Mirror upstream manifest registration without scanning unrelated worlds."""
-    with zipfile.ZipFile(path) as archive:
-        manifest_path = next(
-            (name for name in (f"{package_root}/archipelago.json", "archipelago.json")
-             if name in archive.namelist()),
-            None,
+def _read_world_manifest(path: Path, package_root: str) -> tuple[dict[str, Any], APWorldContainer] | None:
+    """Use Archipelago's container reader after selecting PackSanity's preferred manifest."""
+    container = APWorldContainer(str(path))
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+            for name in (f"{package_root}/archipelago.json", "archipelago.json"):
+                if name in names:
+                    container.manifest_path = name
+                    break
+            else:
+                if any(name.endswith("/archipelago.json") for name in names):
+                    raise TrackerAdapterError(f"APWorld '{path.name}' has no manifest at the package or archive root.")
+                return None
+            try:
+                manifest = container.read_contents(archive)
+            except KeyError as error:
+                if error.args != ("compatible_version",):
+                    raise
+                # Older manifests omitted the container version. Keep their other gates.
+                manifest = json.loads(archive.read(container.manifest_path))
+                container.game = manifest["game"]
+                for field in ("world_version", "minimum_ap_version", "maximum_ap_version"):
+                    if field in manifest:
+                        setattr(container, field, tuplize_version(manifest[field]))
+    except TrackerAdapterError:
+        raise
+    except (OSError, zipfile.BadZipFile, ValueError, TypeError, KeyError) as error:
+        raise TrackerAdapterError(f"Invalid APWorld manifest in '{path.name}': {error}") from error
+    except Exception as error:
+        # APContainer raises a plain Exception for an incompatible container.
+        raise TrackerAdapterError(f"Could not read APWorld container '{path.name}': {error}") from error
+    if not isinstance(container.game, str) or not container.game.strip():
+        raise TrackerAdapterError(f"APWorld '{path.name}' does not declare a game.")
+    if container.minimum_ap_version and version_tuple < container.minimum_ap_version:
+        raise TrackerAdapterError(
+            f"APWorld requires Archipelago {container.minimum_ap_version.as_simple_string()} or newer."
         )
-        if manifest_path is None:
-            return
-        manifest = json.loads(archive.read(manifest_path))
-    world_type = AutoWorld.AutoWorldRegister.world_types.get(manifest.get("game"))
-    if world_type is not None:
-        from Utils import tuplize_version
-        world_type.world_version = tuplize_version(manifest.get("world_version", "0.0.0"))
-        world_type.manifest = manifest
+    if container.maximum_ap_version and version_tuple > container.maximum_ap_version:
+        raise TrackerAdapterError(
+            f"APWorld supports Archipelago {container.maximum_ap_version.as_simple_string()} or older."
+        )
+    return manifest, container
 
 
 @contextmanager

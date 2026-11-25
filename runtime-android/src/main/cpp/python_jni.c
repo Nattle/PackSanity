@@ -1,6 +1,6 @@
-#include <jni.h>
 #include <stdint.h>
 
+#include "../../../../native/src/jni_utf8.h"
 #include "packsanity/python_host.h"
 
 static PackSanityPythonState *from_handle(jlong handle) {
@@ -8,22 +8,22 @@ static PackSanityPythonState *from_handle(jlong handle) {
 }
 
 static void throw_error(JNIEnv *env, char *message) {
-    jclass exception = (*env)->FindClass(env, "java/lang/IllegalStateException");
-    (*env)->ThrowNew(env, exception, message == NULL ? "Embedded CPython call failed" : message);
+    throw_utf8(env, message == NULL ? "Embedded CPython call failed" : message);
     packsanity_python_free_string(message);
 }
 
 JNIEXPORT jlong JNICALL
-Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCreate(
-    JNIEnv *env, jclass clazz, jstring python_home, jstring module_path
+Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCreateUtf8(
+    JNIEnv *env, jclass clazz, jbyteArray python_home, jbyteArray module_path
 ) {
     (void)clazz;
     char *error = NULL;
-    const char *home = (*env)->GetStringUTFChars(env, python_home, NULL);
-    const char *modules = (*env)->GetStringUTFChars(env, module_path, NULL);
-    PackSanityPythonState *state = packsanity_python_create(home, modules, &error);
-    (*env)->ReleaseStringUTFChars(env, python_home, home);
-    (*env)->ReleaseStringUTFChars(env, module_path, modules);
+    char *home = read_utf8(env, python_home, NULL);
+    char *modules = read_utf8(env, module_path, NULL);
+    PackSanityPythonState *state = home == NULL || modules == NULL
+        ? NULL : packsanity_python_create(home, modules, &error);
+    free(home);
+    free(modules);
     if (state == NULL) throw_error(env, error);
     return (jlong)(intptr_t)state;
 }
@@ -37,14 +37,15 @@ Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeClose(
     packsanity_python_close(from_handle(handle));
 }
 
-JNIEXPORT jstring JNICALL
-Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCall(
-    JNIEnv *env, jclass clazz, jlong handle, jint operation, jstring request_json
+JNIEXPORT jbyteArray JNICALL
+Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCallUtf8(
+    JNIEnv *env, jclass clazz, jlong handle, jint operation, jbyteArray request_json
 ) {
     (void)clazz;
     char *result = NULL;
     char *error = NULL;
-    const char *request = (*env)->GetStringUTFChars(env, request_json, NULL);
+    char *request = read_utf8(env, request_json, NULL);
+    if (request == NULL) return NULL;
     int ok;
     switch (operation) {
         case 0: ok = packsanity_python_load_tracker_package(from_handle(handle), request, &result, &error); break;
@@ -53,12 +54,12 @@ Java_dev_nattle_packsanity_ut_PythonNativeRuntime_nativeCall(
         case 3: ok = packsanity_python_update_state(from_handle(handle), request, &result, &error); break;
         default: ok = 0; error = NULL; break;
     }
-    (*env)->ReleaseStringUTFChars(env, request_json, request);
+    free(request);
     if (!ok) {
         throw_error(env, error);
         return NULL;
     }
-    jstring converted = (*env)->NewStringUTF(env, result);
+    jbyteArray converted = utf8_result(env, result, strlen(result));
     packsanity_python_free_string(result);
     return converted;
 }

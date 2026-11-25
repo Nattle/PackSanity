@@ -1,0 +1,9 @@
+registry
+seeded_objects
+object_state
+providers
+script_host
+pack_io
+calendar
+archipelago
+rule_snapshots

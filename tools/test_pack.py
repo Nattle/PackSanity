@@ -12,8 +12,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import urllib.parse
-import urllib.request
 import zipfile
 
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -46,101 +44,77 @@ def normalized_path(value: str) -> str:
 
 
 def remove_jsonc(source: str) -> str:
-    """Remove JavaScript-style comments without touching quoted strings."""
-    output, index, quoted = [], 0, False
+    """Remove comments and extra commas while preserving string values and token boundaries."""
+    output = []
+    index = 0
+    comma = None
     while index < len(source):
         char = source[index]
-        if quoted:
-            output.append(char)
-            if char == "\\" and index + 1 < len(source):
-                index += 1
-                output.append(source[index])
-            elif char == '"':
-                quoted = False
-        elif char == '"':
-            quoted = True
-            output.append(char)
-        elif source.startswith("//", index):
-            index = source.find("\n", index)
-            if index < 0:
-                break
-            output.append("\n")
-        elif source.startswith("/*", index):
+        if char == '"':
+            start = index
+            index += 1
+            while index < len(source):
+                if source[index] == '"':
+                    index += 1
+                    break
+                index += 2 if source[index] == "\\" else 1
+            output.append(source[start:index])
+            comma = None
+            continue
+        if source.startswith("//", index):
+            end = source.find("\n", index + 2)
+            index = len(source) if end < 0 else end
+            continue
+        if source.startswith("/*", index):
             end = source.find("*/", index + 2)
             if end < 0:
                 raise PackError("unterminated JSONC block comment")
-            output.append("\n" * source[index:end + 2].count("\n"))
-            index = end + 1
-        else:
-            output.append(char)
+            output.append(" " + "\n" * source.count("\n", index, end + 2))
+            index = end + 2
+            continue
+        if char == ',':
+            if comma is not None:
+                output[comma] = ""
+            comma = len(output)
+        elif not char.isspace():
+            if comma is not None and char in "}]":
+                output[comma] = ""
+            comma = None
+        output.append(char)
         index += 1
-    normalized = "".join(output)
-    return re.sub(r",\s*([}\]])", r"\1", normalized)
+    return "".join(output)
 
 
 def read_archive(source: str) -> tuple[dict[str, bytes], str]:
-    source_path = Path(source)
-    temporary = None
-    if source_path.is_file():
-        archive_path = source_path
-        label = str(source_path)
-    elif source_path.is_dir():
+    path = Path(source)
+    if path.is_dir():
         files = {}
-        for candidate in source_path.rglob("*"):
+        for candidate in path.rglob("*"):
             if candidate.is_file():
-                files[normalized_path(candidate.relative_to(source_path).as_posix())] = candidate.read_bytes()
-        return files, str(source_path)
-    elif source.startswith(("https://", "http://")):
-        temporary = download_source(source)
-        archive_path = temporary
-        label = source
-    else:
+                files[normalized_path(candidate.relative_to(path).as_posix())] = candidate.read_bytes()
+        return files, str(path)
+    if not path.is_file():
         raise PackError(f"source does not exist: {source}")
-    try:
-        if archive_path.stat().st_size > MAX_ARCHIVE_BYTES:
-            raise PackError(f"archive exceeds {MAX_ARCHIVE_BYTES} byte compressed limit")
-        with zipfile.ZipFile(archive_path) as archive:
-            infos = archive.infolist()
-            if len(infos) > MAX_ENTRIES:
-                raise PackError(f"archive has more than {MAX_ENTRIES} entries")
-            files, expanded = {}, 0
-            for info in infos:
-                if info.is_dir():
-                    continue
-                if stat.S_ISLNK(info.external_attr >> 16):
-                    raise PackError(f"archive contains a symbolic link: {info.filename}")
-                path = normalized_path(info.filename)
-                if info.file_size > MAX_ENTRY_BYTES:
-                    raise PackError(f"archive entry is too large: {path}")
-                expanded += info.file_size
-                if expanded > MAX_UNCOMPRESSED_BYTES:
-                    raise PackError("archive exceeds uncompressed size limit")
-                files[path] = archive.read(info)
-            return files, label
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-
-
-def download_source(source: str) -> Path:
-    parsed = urllib.parse.urlparse(source)
-    parts = [part for part in parsed.path.split("/") if part]
-    url = source
-    if parsed.netloc.lower() == "github.com" and len(parts) >= 2 and not parsed.path.endswith(".zip"):
-        owner, repository = parts[:2]
-        ref = parts[3] if len(parts) >= 4 and parts[2] in {"tree", "blob"} else None
-        endpoint = f"https://api.github.com/repos/{owner}/{repository}/zipball"
-        url = f"{endpoint}/{urllib.parse.quote(ref)}" if ref else endpoint
-    request = urllib.request.Request(url, headers={"User-Agent": "PackSanity/0.1", "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        with tempfile.NamedTemporaryFile(prefix="packsanity-", suffix=".zip", delete=False) as target:
-            total = 0
-            while chunk := response.read(1024 * 1024):
-                total += len(chunk)
-                if total > MAX_ARCHIVE_BYTES:
-                    raise PackError(f"download exceeds {MAX_ARCHIVE_BYTES} byte limit")
-                target.write(chunk)
-            return Path(target.name)
+    if path.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise PackError(f"archive exceeds {MAX_ARCHIVE_BYTES} byte compressed limit")
+    with zipfile.ZipFile(path) as archive:
+        infos = archive.infolist()
+        if len(infos) > MAX_ENTRIES:
+            raise PackError(f"archive has more than {MAX_ENTRIES} entries")
+        files, expanded = {}, 0
+        for info in infos:
+            if info.is_dir():
+                continue
+            if stat.S_ISLNK(info.external_attr >> 16):
+                raise PackError(f"archive contains a symbolic link: {info.filename}")
+            relative = normalized_path(info.filename)
+            if info.file_size > MAX_ENTRY_BYTES:
+                raise PackError(f"archive entry is too large: {relative}")
+            expanded += info.file_size
+            if expanded > MAX_UNCOMPRESSED_BYTES:
+                raise PackError("archive exceeds uncompressed size limit")
+            files[relative] = archive.read(info)
+        return files, str(path)
 
 
 def resolve_root(files: dict[str, bytes]) -> dict[str, bytes]:
@@ -170,16 +144,18 @@ def select_variant(files: dict[str, bytes], requested: str | None) -> tuple[str,
     variants = manifest.get("variants") or {}
     if not isinstance(variants, dict):
         raise PackError("manifest variants must be an object")
-    active = requested if requested in variants else "standard" if "standard" in variants else next(iter(variants), "standard")
-    selected = {}
+    if requested is not None and requested not in (variants or {"standard": {}}):
+        raise PackError(f"unknown variant: {requested}")
+    active = requested or ("standard" if "standard" in variants else next(iter(variants), "standard"))
+    selected, overlay = {}, {}
     for path, contents in files.items():
         first, separator, remaining = path.partition("/")
         if separator and first in variants:
             if first == active:
-                selected[remaining] = contents
+                overlay[remaining] = contents
         else:
             selected[path] = contents
-    return active, selected, manifest
+    return active, selected | overlay, manifest
 
 
 def module_names(path: str) -> list[str]:
@@ -345,20 +321,25 @@ def location_seed_source(path: str, records: list[dict]) -> list[str]:
 
 def seed_source(files: dict[str, bytes]) -> str:
     statements = []
-    registrations = {"items": set(), "locations": set()}
-    for contents in files.values():
-        text = contents.decode("utf-8", errors="replace")
-        for kind, method in (("items", "AddItems"), ("locations", "AddLocations")):
-            registrations[kind].update(
-                re.findall(r"Tracker\s*:\s*" + method + r"\s*\(\s*['\"]([^'\"]+)", text)
-            )
     for path, contents in sorted(files.items()):
-        normalized = path.lower()
-        is_json = normalized.endswith((".json", ".jsonc"))
-        if is_json and (normalized.startswith("items/") or path in registrations["items"]):
-            statements.extend(item_seed_source(path, read_json_records(contents)))
-        elif is_json and (normalized.startswith("locations/") or path in registrations["locations"]):
-            statements.extend(location_seed_source(path, read_json_records(contents)))
+        start = contents.removeprefix(b"\xef\xbb\xbf").lstrip()[:1]
+        if start not in (b"[", b"/"):
+            continue
+        records = [record for record in read_json_records(contents) if isinstance(record, dict)]
+        folder = path.split("/", 1)[0].lower()
+        if any(
+            record.keys() & {"codes", "stages", "item_left", "item_right", "max_quantity"}
+            or isinstance(record.get("type"), str)
+            or isinstance(record.get("name"), str) and folder in {"items", "items.json"}
+            for record in records
+        ):
+            statements.extend(item_seed_source(path, records))
+        if any(
+            record.keys() & {"sections", "children", "map_locations", "parent", "access_rules", "visibility_rules"}
+            or isinstance(record.get("name"), str) and (len(record) == 1 or folder in {"locations", "locations.json"})
+            for record in records
+        ):
+            statements.extend(location_seed_source(path, records))
     return "\n".join(statements) + "\n"
 
 
@@ -404,10 +385,10 @@ def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int) 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", help="a pack directory, ZIP file, direct ZIP URL, or GitHub repository URL")
+    parser.add_argument("source", help="a local pack directory or ZIP file")
     parser.add_argument("--variant", help="variant UID; defaults to standard then the first manifest variant")
     parser.add_argument("--host", default=os.environ.get("PACKSANITY_LUA", "packsanity-lua"), help="packsanity-lua executable")
-    parser.add_argument("--bootstrap", default=str(Path(__file__).resolve().parents[1] / "lua" / "host.lua"))
+    parser.add_argument("--bootstrap", default=str(Path(__file__).resolve().parents[1] / "build" / "meson" / "host.lua"))
     parser.add_argument("--pack-io-limit", type=int, default=DEFAULT_PACK_IO_BYTES, help="maximum non-media PackIO bytes registered with Lua (default: 96 MiB)")
     parser.add_argument("--json", action="store_true", help="emit a machine-readable report")
     options = parser.parse_args()
@@ -427,7 +408,7 @@ def main() -> int:
         for warning in warnings:
             print(f"WARN {warning}", file=sys.stderr)
         return 0
-    except (PackError, OSError, subprocess.CalledProcessError, urllib.error.URLError, zipfile.BadZipFile) as error:
+    except (PackError, OSError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
         print(f"FAIL {error}", file=sys.stderr)
         return 1
 

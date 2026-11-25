@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import shutil
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -47,13 +48,6 @@ class LoadingIntegrationTest(unittest.TestCase):
                                str(ROOT/'tools/test_world.py'), str(world or self.world), *options],
                               env=self.env, text=True,capture_output=True,timeout=60)
 
-    def test_plain_host_bootstrap_matches_the_ordered_fragments(self):
-        names = ('registry', 'seeded_objects', 'object_state', 'providers', 'script_host',
-                 'pack_io', 'calendar', 'archipelago', 'rule_snapshots')
-        source = ''.join((ROOT/'lua/poptracker_host'/f'{name}.lua').read_text() for name in names)
-        self.assertEqual((ROOT/'lua/host.lua').read_text(),
-                         source.replace('__PACKSANITY_EPOCH_SECONDS__', '0'))
-
     def test_computed_registration_native_callbacks_and_hint_mapping(self):
         result = self.run_pack('--all-variants','--fixture',str(ROOT/'tests/scenarios/example-pack.json'),'--json')
         self.assertEqual(result.returncode,0,result.stderr)
@@ -63,6 +57,315 @@ class LoadingIntegrationTest(unittest.TestCase):
             self.assertEqual(variant['items'],1)
             self.assertEqual(variant['highlights']['area/chest'],1)
         self.assertIn('PackSanity callback fixture',result.stderr)
+
+    def test_computed_registrations_activate_objects_immediately(self):
+        pack = Path(self.temp.name) / 'computed'
+        (pack / 'data').mkdir(parents=True)
+        (pack / 'scripts').mkdir()
+        (pack / 'manifest.json').write_text('{"package_uid":"computed"}')
+        (pack / 'data/objects.txt').write_text(
+            '\ufeff[/* item */ {"type":"static",,"codes":"switch,]",},]'
+        )
+        (pack / 'data/places.json').write_text('[{"name":"Area","sections":[{"name":"Chest"}]}]')
+        (pack / 'data/late.json').write_text('[{"type":"toggle","codes":"late"}]')
+        (pack / 'scripts/init.lua').write_text("""
+            local root = 'data/'
+            assert(Tracker:FindObjectForCode('switch') == nil)
+            Tracker:AddItems(root .. 'objects.txt')
+            assert(Tracker:ProviderCountForCode('switch') == 1)
+            Tracker:AddLocations({root .. 'places.json'})
+            assert(Tracker:FindObjectForCode('@Area/Chest'))
+            Archipelago:AddItemHandler('late', function()
+                Tracker:AddItems(root .. 'late.json')
+                assert(Tracker:FindObjectForCode('late')).Active = true
+            end)
+        """)
+        scenario = pack.parent / 'computed-scenario.json'
+        scenario.write_text(json.dumps({
+            'events': [{'type': 'item', 'index': 0, 'item': 1, 'name': 'Late', 'player': 1}],
+            'expect': {'items': 2, 'providerCounts': {'late': 1}},
+        }))
+        result = self.run_pack('--strict', '--fixture', str(scenario), pack=pack)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        native_dir = Path(self.env['PACKSANITY_NATIVE_DIR'])
+        result = subprocess.run([
+            sys.executable, str(ROOT / 'tools/test_pack.py'), str(pack),
+            '--host', str(native_dir / 'packsanity-lua'), '--bootstrap', str(native_dir / 'host.lua'),
+        ], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_lua_jni_round_trips_standard_utf8_and_embedded_nuls(self):
+        source = Path(self.temp.name) / 'LuaUnicodeProbe.java'
+        source.write_text(r'''
+            import dev.nattle.packsanity.lua.LuaNativeRuntime;
+
+            class LuaUnicodeProbe {
+                public static void main(String[] args) {
+                    try (var lua = new LuaNativeRuntime(16 * 1024 * 1024, 100_000)) {
+                        lua.execute(
+                            "function echo(s) assert(s:sub(1,4) == '🧭'); " +
+                            "assert(utf8.len(s) == 2); return s end " +
+                            "function fail(s) error(s) end", "@test"
+                        );
+                        String text = "🧭" + (char) 0;
+                        if (!text.equals(lua.callString("echo", text))) {
+                            throw new AssertionError("Lua changed the Unicode text");
+                        }
+                        try {
+                            lua.callString("fail", "🧭");
+                            throw new AssertionError("Lua error was lost");
+                        } catch (IllegalStateException error) {
+                            if (!error.getMessage().endsWith("🧭")) throw error;
+                        }
+                    }
+                }
+            }
+        ''', encoding='utf-8')
+        java = Path(self.env['JAVA_HOME']) / 'bin/java'
+        jars = ROOT / 'cli/build/install/cli/lib'
+        result = subprocess.run(
+            [str(java), '--class-path', str(jars / '*'), str(source)],
+            env=self.env, text=True, capture_output=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_live_registration_keeps_duplicate_items_and_stable_late_locations(self):
+        pack = Path(self.temp.name) / 'live-definitions'
+        for folder in ('items', 'locations', 'scripts'):
+            (pack / folder).mkdir(parents=True)
+        (pack / 'manifest.json').write_text('{"package_uid":"live-definitions"}')
+        (pack / 'items/Étage.json').write_text('[{"type":"static","codes":"shared"}]', encoding='utf-8')
+        (pack / 'items/other.json').write_text('[{"type":"toggle","codes":"shared"}]')
+        (pack / 'locations/a-late.json').write_text('[{"name":"Area 1","sections":[{"name":"Chest"}]}]')
+        (pack / 'locations/b-child.json').write_text(
+            '[{"name":"Child","parent":"Area-1","sections":[{"name":"Chest"}]}]'
+        )
+        (pack / 'locations/z-start.json').write_text('[{"name":"Area-1","sections":[{"name":"Chest"}]}]')
+        (pack / 'scripts/init.lua').write_text("""
+            local items = 'items/'
+            Tracker:AddItems(items .. 'étage.json')
+            assert(Tracker:FindObjectForCode('shared').Type == 'static')
+            Tracker:AddItems(items .. 'other.json')
+            Tracker:AddLocations('locations/z-start.json')
+            Tracker:FindObjectForCode('@Area-1/Chest').Highlight = 1
+            Archipelago:AddItemHandler('late', function()
+                Tracker:AddLocations('locations/b-child.json')
+                Tracker:FindObjectForCode('@Area-1/Child/Chest').Highlight = 3
+                Tracker:AddLocations('locations/a-late.json')
+                Tracker:FindObjectForCode('@Area 1/Chest').Highlight = 2
+            end)
+        """, encoding='utf-8')
+        scenario = pack.parent / 'live-definitions-scenario.json'
+        scenario.write_text(json.dumps({
+            'events': [{'type': 'item', 'index': 0, 'item': 1, 'name': 'Late', 'player': 1}],
+            'expect': {'items': 2, 'sections': 3, 'highlights': {
+                'area-1/chest': 1, 'area-1--2/chest': 2, 'child/chest': 3,
+            }},
+        }))
+        zipped = pack.with_suffix('.zip')
+        with zipfile.ZipFile(zipped, 'w') as archive:
+            for path in pack.rglob('*'):
+                if path.is_file():
+                    archive.write(path, path.relative_to(pack).as_posix())
+        for source in (pack, zipped):
+            with self.subTest(source=source):
+                result = self.run_pack('--strict', '--fixture', str(scenario), pack=source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_location_parents_only_use_earlier_successful_registrations(self):
+        pack = Path(self.temp.name) / 'location-parents.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"location-parents"}')
+            archive.writestr('locations/unused.json', '[{"name":"Unused"}]')
+            archive.writestr('models/rooms.data', '[{"name":"Room","metadata":{"flag":true}}]')
+            archive.writestr('locations/child.json',
+                             '[{"name":"Child","parent":"Unused","sections":[{"name":"Chest"}]}]')
+            archive.writestr('locations/late-child.json',
+                             '[{"name":"Annex","parent":"Room","sections":[{"name":"Check"}]}]')
+            archive.writestr('locations/ref.json',
+                             '[{"name":"Mirror","sections":[{"name":"Alias","ref":"Room/Annex/Check"}]}]')
+            archive.writestr('layouts/fallback.json', '{}')
+            archive.writestr('scripts/init.lua', """
+                assert(not Tracker:AddLayouts({'layouts/missing.json', 'layouts/fallback.json'}))
+                assert(Tracker:AddLocations('models/rooms.data'))
+                assert(Tracker:FindObjectForCode('@Room'))
+                assert(Tracker:AddLocations('locations/child.json'))
+                local chest = assert(Tracker:FindObjectForCode('@Child/Chest'))
+                assert(chest.FullID == 'Child/Chest')
+                assert(not Tracker:FindObjectForCode('@Unused/Child/Chest'))
+                chest.Highlight = 1
+                Archipelago:AddItemHandler('late', function()
+                    assert(Tracker:AddLocations({'locations/late-child.json', 'locations/ref.json'}))
+                    local check = assert(Tracker:FindObjectForCode('@Room/Annex/Check'))
+                    assert(check.FullID == 'Room/Annex/Check')
+                    assert(Tracker:FindObjectForCode('@Mirror/Check') == check)
+                    check.Highlight = 2
+                end)
+            """)
+        scenario = pack.with_suffix('.json')
+        scenario.write_text(json.dumps({
+            'events': [{'type': 'item', 'index': 0, 'item': 1, 'name': 'Late', 'player': 1}],
+            'expect': {'highlights': {'child/chest': 1, 'annex/check': 2}},
+        }))
+        result = self.run_pack('--fixture', str(scenario), '--json', pack=pack)
+        self.assertEqual(0, result.returncode, result.stderr)
+        variant = json.loads(result.stdout)['variants'][0]
+        self.assertEqual(["Could not resolve location parent 'Unused' for 'Child'"], variant['diagnostics'])
+        self.assertIn('layouts/fallback.json', variant['registeredFiles'])
+        self.assertNotIn('layouts/missing.json', variant['registeredFiles'])
+
+    def test_failed_optional_layout_does_not_fail_strict_mode(self):
+        pack = Path(self.temp.name) / 'layout-fallback.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"layout-fallback"}')
+            archive.writestr('layouts/fallback.json', '{}')
+            archive.writestr('layouts/broken.json', '{"bad":')
+            archive.writestr('layouts/wrong-shape.json', '[]')
+            archive.writestr('scripts/init.lua', """
+                assert(not Tracker:AddLayouts('layouts/broken.json'))
+                assert(not Tracker:AddLayouts('layouts/wrong-shape.json'))
+                if not Tracker:AddLayouts('layouts/optional.json') then
+                    assert(Tracker:AddLayouts('layouts/fallback.json'))
+                end
+            """)
+        result = self.run_pack('--strict', pack=pack)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_location_reference_prefers_a_registered_suffix_until_exact_file_loads(self):
+        pack = Path(self.temp.name) / 'registered-references.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"registered-references"}')
+            archive.writestr(
+                'locations/active.json',
+                '[{"name":"Outer","children":[{"name":"Room","sections":[{"name":"Chest"}]}]}]',
+            )
+            archive.writestr(
+                'locations/preferred.json',
+                '[{"name":"Annex","children":[{"name":"Room","sections":[{"name":"Chest"}]}]}]',
+            )
+            archive.writestr('locations/exact.json', '[{"name":"Room","sections":[{"name":"Chest"}]}]')
+            archive.writestr(
+                'locations/view.json', '[{"name":"Mirror","sections":[{"name":"Alias","ref":"Room/Chest"}]}]'
+            )
+            archive.writestr('scripts/init.lua', """
+                Tracker:AddLocations({'locations/view.json', 'locations/preferred.json', 'locations/active.json'})
+                local alias = assert(Tracker:FindObjectForCode('@Mirror/Chest'))
+                assert(alias == Tracker:FindObjectForCode('@Annex/Room/Chest'))
+                assert(alias.FullID == 'Annex/Room/Chest')
+                alias.Highlight = 1
+                Archipelago:AddItemHandler('load exact location', function()
+                    Tracker:AddLocations('locations/exact.json')
+                    local exact = assert(Tracker:FindObjectForCode('@Room/Chest'))
+                    assert(exact == Tracker:FindObjectForCode('@Mirror/Chest'))
+                    assert(exact.FullID == 'Room/Chest')
+                    exact.Highlight = 2
+                end)
+            """)
+        first = self.run_pack('--strict', '--json', pack=pack)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        highlights = json.loads(first.stdout)['variants'][0]['highlights']
+        self.assertEqual(1, highlights['annex/room/chest'])
+        self.assertEqual(0, highlights['outer/room/chest'])
+        self.assertNotIn('room/chest', highlights)
+        scenario = pack.with_suffix('.json')
+        scenario.write_text(json.dumps({
+            'events': [{'type': 'item', 'index': 0, 'item': 1, 'name': 'Late', 'player': 1}],
+            'expect': {'highlights': {'annex/room/chest': 1, 'room/chest': 2}},
+        }))
+        result = self.run_pack('--strict', '--fixture', str(scenario), pack=pack)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_pack_module_search_order_and_load_script_contract(self):
+        pack = Path(self.temp.name) / 'module-search.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"module-search"}')
+            archive.writestr('scripts/group/module/init.lua', 'return {...}')
+            archive.writestr('group/module.lua', 'error("root module shadows scripts init")')
+            archive.writestr('fallback/module/init.lua', 'return 42')
+            archive.writestr('scripts/prefer.lua', 'return "scripts file"')
+            archive.writestr('scripts/prefer/init.lua', 'error("init shadows file")')
+            archive.writestr('scripts/effect.lua', 'calls = (calls or 0) + 1; return false')
+            archive.writestr('scripts/init.lua', """
+                local module = require('group.module')
+                assert(module[1] == 'group.module')
+                assert(require('group.module') == module)
+                assert(require('group.module.init')[1] == 'group.module.init')
+                assert(require('scripts/group/module/init')[1] == 'scripts/group/module/init')
+                assert(require('fallback.module') == 42)
+                assert(require('prefer') == 'scripts file')
+                assert(require('effect') == false)
+                assert(require('effect') == false)
+                assert(calls == 1)
+                assert(ScriptHost:LoadScript('/scripts/effect.lua') == true)
+                assert(ScriptHost:LoadScript('/effect.lua') == false)
+                assert(ScriptHost:LoadScript('/scripts/effect.lua') == true)
+                assert(calls == 3)
+                assert(Tracker:AddClasses('missing.json') == false)
+            """)
+        result = self.run_pack('--strict', pack=pack)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_registration_matches_exact_archive_and_explicit_variant_paths(self):
+        pack = Path(self.temp.name) / 'archive-registration-paths.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"paths","variants":{"standard":{}}}')
+            archive.writestr('items/States.json', '[]')
+            archive.writestr('items/states.json', '[{"type":"static","codes":"wrong"}]')
+            archive.writestr('items/items.json', '[{"type":"static","codes":"base"}]')
+            archive.writestr('standard/items/items.json',
+                             '[{"type":"toggle","codes":"variant","initial_active_state":true}]')
+            archive.writestr('scripts/init.lua', """
+                Tracker:AddItems('items/States.json')
+                assert(Tracker:ProviderCountForCode('wrong') == 0)
+                Tracker:AddItems('standard/items/items.json')
+                assert(Tracker:ProviderCountForCode('variant') == 1)
+                local first = assert(Tracker:FindObjectForCode('variant'))
+                first.Active = false
+                Tracker:AddItems('items/items.json')
+                assert(Tracker:ProviderCountForCode('variant') == 1)
+                assert(Tracker:FindObjectForCode('variant') == first)
+                first.Active = true
+                assert(Tracker:ProviderCountForCode('variant') == 2)
+                assert(Tracker:ProviderCountForCode('base') == 0)
+                Archipelago:AddItemHandler('repeat registration', function()
+                    Tracker:AddItems('ITEMS/ITEMS.JSON')
+                    assert(Tracker:ProviderCountForCode('variant') == 3)
+                end)
+            """)
+        result = self.run_pack('--strict', '--json', pack=pack)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(2, json.loads(result.stdout)['variants'][0]['items'])
+        scenario = pack.with_suffix('.json')
+        scenario.write_text(json.dumps({
+            'events': [{'type': 'item', 'index': 0, 'item': 1, 'name': 'Late', 'player': 1}],
+            'expect': {'items': 3, 'providerCounts': {'variant': 3, 'wrong': 0, 'base': 0}},
+        }))
+        result = self.run_pack('--strict', '--fixture', str(scenario), pack=pack)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_schema_only_locations_and_generated_item_ids(self):
+        pack = Path(self.temp.name) / 'schema-and-ids.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"schema-and-ids"}')
+            archive.writestr('data/areas.json', '[{"name":"Room","custom_metadata":{"group":"example"}}]')
+            archive.writestr('items/a.json', '[{"type":"static","img":"one.png"}]')
+            archive.writestr('items/b.json', '[{"type":"static","img":"two.png"}]')
+            archive.writestr('data/display.json', '[{"img":"three.png"}]')
+            archive.writestr('scripts/init.lua', """
+                Tracker:AddLocations('data/areas.json')
+                assert(Tracker:FindObjectForCode('@Room'))
+                Tracker:AddItems({'items/a.json', 'items/b.json'})
+                Tracker:AddItems('data/display.json')
+                local icons = {}
+                for index = 0, 2 do
+                    local item = assert(Tracker:FindObjectForCode('item-' .. index))
+                    icons[item.Icon] = true
+                end
+                assert(icons['one.png'] and icons['two.png'] and icons['three.png'])
+            """)
+        result = self.run_pack('--strict', '--json', pack=pack)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(3, json.loads(result.stdout)['variants'][0]['items'])
 
     def test_wrong_hint_target_expectation_fails(self):
         fixture = Path(self.temp.name)/'bad-hint.json'
@@ -92,6 +395,8 @@ class LoadingIntegrationTest(unittest.TestCase):
         with zipfile.ZipFile(archive,'w') as zip:
             for source in (ROOT/'tests/fixtures/callback-pack').rglob('*'):
                 if source.is_file(): zip.write(source,'wrapper/'+source.relative_to(ROOT/'tests/fixtures/callback-pack').as_posix())
+            zip.writestr('wrapper/schema/manifest.json', '{}')
+            zip.writestr('README.txt', 'Release notes')
         direct = json.loads(self.run_pack('--json').stdout)['variants']
         zipped = self.run_pack('--json',pack=archive)
         self.assertEqual(zipped.returncode,0,zipped.stderr)
@@ -178,10 +483,26 @@ class LoadingIntegrationTest(unittest.TestCase):
                 self.assertIn('UNSUPPORTED_APWORLD_CONTAINER',result.stderr)
                 self.assertNotIn('IMPORT SHOULD NOT HAPPEN',result.stderr)
 
+    def test_python_and_kotlin_prefer_the_package_world_manifest(self):
+        world = Path(self.temp.name) / 'tiny_world_with_manifest.apworld'
+        source = (ROOT / 'tests/fixtures/tiny_world/__init__.py').read_text()
+        with zipfile.ZipFile(world, 'w') as archive:
+            archive.writestr('archipelago.json', '{"game":"Ignored","compatible_version":999}')
+            archive.writestr(f'{world.stem}/__init__.py', source)
+            archive.writestr(f'{world.stem}/archipelago.json', json.dumps({
+                'game': 'PackSanity World', 'world_version': '1.2.3',
+                'compatible_version': 7, 'minimum_ap_version': '0.6.8',
+            }))
+        fixture = ROOT / 'tests/scenarios/example-world.json'
+        result = self.run_world('--fixture', str(fixture), '--json', world=world)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(report['state']['locations'][0]['reachable'])
+
     def test_directory_symlinks_are_rejected(self):
         pack = Path(self.temp.name)/'symlink-pack'
         shutil.copytree(ROOT/'tests/fixtures/callback-pack', pack)
-        (pack/'outside.lua').symlink_to(ROOT/'lua/host.lua')
+        (pack/'outside.lua').symlink_to(ROOT/'lua/poptracker_host/registry.lua')
         result = self.run_pack(pack=pack)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('symbolic link', result.stderr)
@@ -300,6 +621,14 @@ class LoadingIntegrationTest(unittest.TestCase):
         result = self.run_world('--external-pack',str(companion),world=world)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('Map image not found in companion',result.stderr)
+
+    def test_unusable_explicit_companion_fails_verification(self):
+        world, companion = self.make_mapped_world(external=True)
+        with zipfile.ZipFile(companion, 'w') as archive:
+            archive.writestr('README.txt', 'No maps in this archive')
+        result = self.run_world('--external-pack', str(companion), world=world)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('could not use companion map pack', result.stderr)
 
     def test_wrapped_apworld_is_rejected_by_the_package_gate(self):
         world, _ = self.make_mapped_world(wrapped=True)

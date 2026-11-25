@@ -9,6 +9,7 @@ iOS framework resources.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import shutil
 from pathlib import Path
@@ -31,6 +32,34 @@ def copy_tree(source: Path, destination: Path) -> None:
     if not source.is_dir():
         raise RuntimeError(f"Required runtime input is missing: {source}")
     shutil.copytree(source, destination, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+
+def stage_option_rolling(source: Path, destination: Path) -> None:
+    """Keep the upstream option helper available to APWorld registration imports."""
+    text = source.read_text(encoding="utf-8")
+    names = (
+        "interpret_on_off", "get_choice_legacy", "get_choice", "update_weights",
+        "roll_linked_options", "roll_triggers", "handle_option", "roll_settings", "roll_alttp_settings",
+    )
+    functions = {node.name: node for node in ast.parse(text).body if isinstance(node, ast.FunctionDef)}
+    header = """# Staged from the pinned Archipelago Generate.py. See notices/Archipelago-MIT.txt.
+from __future__ import annotations
+
+import argparse
+import copy
+import logging
+import random
+from collections import Counter
+from itertools import chain
+from typing import Any
+
+import Options
+import Utils
+from BaseClasses import PlandoOptions
+from Utils import __version__, tuplize_version, version_tuple
+"""
+    definitions = "\n\n\n".join(ast.get_source_segment(text, functions[name]) for name in names)
+    destination.write_text(header + "\n\n" + definitions + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -56,6 +85,7 @@ def main() -> None:
 
     for relative in CORE_FILES:
         copy_file(args.archipelago_source / relative, output / relative)
+    stage_option_rolling(args.archipelago_source / "Generate.py", output / "Generate.py")
     copy_file(args.archipelago_source / "worlds/AutoWorld.py", output / "worlds/AutoWorld.py")
     copy_file(args.archipelago_source / "Fill.py", output / "Fill.py")
     copy_file(args.archipelago_source / "worlds/Files.py", output / "worlds/Files.py")

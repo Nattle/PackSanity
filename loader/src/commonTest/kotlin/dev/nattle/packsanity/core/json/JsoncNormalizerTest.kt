@@ -11,6 +11,18 @@ class JsoncNormalizerTest {
     private val normalizer = JsoncNormalizer()
 
     @Test
+    fun separatesCommentsFromPrimitiveFields() {
+        val value =
+            PackJson.decodeFromString<
+                dev.nattle.packsanity.feature.packruntime.data.schema.RawItem
+            >(
+                normalizer.prepare("""{"max_quantity":12/* comment */,"codes":"slash//keep"}""")
+            )
+        assertEquals("12", value.maxQuantity?.content)
+        assertEquals("slash//keep", value.codes?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun handlesBomAndComments() {
         val normalized =
             normalizer

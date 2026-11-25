@@ -13,6 +13,7 @@ from BaseClasses import LocationProgressType
 from NetUtils import NetworkItem
 from worlds import AutoWorld
 from packsanity_ut_core import replay_inventory
+from packsanity_ut_upstream import discard_generated_network_items
 from packsanity_ut_models import LOGGER, TrackerAdapterError, TrackerSession, tracker_setting
 import packsanity_ut_packages as packages
 import packsanity_ut_maps as maps
@@ -61,9 +62,10 @@ class MobileUniversalTracker:
                     LOGGER.warning("Cached companion map pack is missing or not a ZIP: %s", pack_path)
             except (OSError, ValueError) as error:
                 LOGGER.warning("Could not open cached companion map pack: %s", error)
+        result = self._project_update(session, [], set(), None)
         self._session = session
         LOGGER.info("Initialized mobile UT tracker for %s slot %s", game, slot_name)
-        return self.update([], set(), None)
+        return result
 
     def _reconstruct_session(
         self,
@@ -120,16 +122,7 @@ class MobileUniversalTracker:
                 if returned is not None:
                     session = build_session(returned)
 
-        # UT 0.3.3 discards generated network items before replay: the server's
-        # ReceivedItems already includes starting inventory. Keep code-less events.
-        precollected = session.multiworld.precollected_items
-        session.multiworld.precollected_items = {
-            player: [item for item in items if item.code is None]
-            for player, items in precollected.items()
-        }
-        LOGGER.debug("Removed %s generated network starting items before server replay",
-                     sum(len(items) for items in precollected.values())
-                     - sum(len(items) for items in session.multiworld.precollected_items.values()))
+        discard_generated_network_items(session)
 
         return session
 
@@ -141,20 +134,44 @@ class MobileUniversalTracker:
         stored_data: dict[str, Any] | None = None,
         slot_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        session = self._require_session()
-        if slot_data is not None and slot_data != session.slot_data:
-            LOGGER.info("Rebuilding Universal Tracker graph after slot-data change for %s", session.game)
-            previous = session
+        previous = self._require_session()
+        session = previous
+        next_slot_data = previous.slot_data if slot_data is None else slot_data
+        if previous.rebuild_after_failed_update or next_slot_data != previous.slot_data:
+            LOGGER.info("Rebuilding Universal Tracker graph for %s", previous.game)
             try:
                 session = self._reconstruct_session(
-                    previous.game, previous.slot, previous.slot_name, slot_data,
+                    previous.game, previous.slot, previous.slot_name, next_slot_data,
                     previous.team, previous.yaml_options,
                 )
             except Exception as error:
                 raise TrackerAdapterError(f"Could not reconstruct from updated slot data: {error}") from error
             session.external_pack_path = previous.external_pack_path
-            stored_data = (previous.stored_data or {}) | (stored_data or {})
-        self._apply_stored_data(session, stored_data or {})
+        accepted_storage = dict(previous.stored_data or {})
+        previous_pack = previous.external_pack_path
+        storage = stored_data or {}
+        if session is not previous:
+            storage = accepted_storage | storage
+        try:
+            self._apply_stored_data(session, storage)
+            result = self._project_update(session, received_items, checked_locations, missing_locations)
+        except Exception:
+            if session is previous:
+                session.stored_data = accepted_storage
+                session.external_pack_path = previous_pack
+                # A world hook may have modified its graph before raising.
+                session.rebuild_after_failed_update = True
+            raise
+        self._session = session
+        return result
+
+    def _project_update(
+        self,
+        session: TrackerSession,
+        received_items: list[dict[str, Any]],
+        checked_locations: set[int],
+        missing_locations: set[int] | None,
+    ) -> dict[str, Any]:
         world = session.multiworld.worlds[session.player]
         map_state = self._map_state(world, session)
         network_items = tuple(
@@ -247,7 +264,6 @@ class MobileUniversalTracker:
         result["map"] = map_state
         session.logic_signature = logic_signature
         session.logic_payload = dict(result)
-        self._session = session
         return result
 
     def close(self) -> None:

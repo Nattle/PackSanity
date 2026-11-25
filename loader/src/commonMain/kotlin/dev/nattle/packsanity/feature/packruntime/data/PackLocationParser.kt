@@ -22,7 +22,10 @@ internal fun RawLocation.toDomain(
 ): TrackerLocation {
     val locationName = name ?: "Location $siblingIndex"
     val id =
-        locationIds.allocate(listOfNotNull(parentId, locationName.packSlug()).joinToString("/"))
+        locationIds.allocate(
+            listOfNotNull(parentId, locationName.packSlug()).joinToString("/"),
+            sourcePath,
+        )
     val locationPath = parentPath + locationName
     val effectiveAccessRules = mergeRules(parentAccessRules, ruleParser.parse(accessRules))
     val effectiveVisibilityRules =
@@ -155,12 +158,31 @@ internal fun List<RuleExpression>.andAlternatives(): List<RuleExpression.And>? {
     return alternatives
 }
 
-internal class PackLocationIdAllocator {
+internal class PackLocationIdAllocator(
+    private val reserved: Map<String, List<String>> = emptyMap()
+) {
     private val occurrences = mutableMapOf<String, Int>()
+    private val usedIds = reserved.values.flatten().toMutableSet()
+    private val idsByFile = mutableMapOf<String, MutableList<String>>()
 
-    fun allocate(baseId: String): String {
-        val occurrence = (occurrences[baseId] ?: 0) + 1
-        occurrences[baseId] = occurrence
-        return if (occurrence == 1) baseId else "$baseId--$occurrence"
+    fun allocate(baseId: String, sourcePath: String): String {
+        val fileIds = idsByFile.getOrPut(sourcePath, ::mutableListOf)
+        val id = reserved[sourcePath]?.getOrNull(fileIds.size) ?: allocateNext(baseId)
+        fileIds.add(id)
+        return id
+    }
+
+    fun reservations(): Map<String, List<String>> = idsByFile.mapValues { (_, ids) -> ids.toList() }
+
+    private fun allocateNext(baseId: String): String {
+        var occurrence = (occurrences[baseId] ?: 0) + 1
+        while (true) {
+            val id = if (occurrence == 1) baseId else "$baseId--$occurrence"
+            if (usedIds.add(id)) {
+                occurrences[baseId] = occurrence
+                return id
+            }
+            occurrence++
+        }
     }
 }

@@ -1,6 +1,7 @@
 package dev.nattle.packsanity.feature.packageimport.data
 
 import dev.nattle.packsanity.core.json.JsoncNormalizer
+import dev.nattle.packsanity.core.json.PackJson
 import dev.nattle.packsanity.feature.packageimport.domain.PackageArchive
 import dev.nattle.packsanity.feature.packageimport.domain.PackageArchiveEntry
 import kotlinx.serialization.json.Json
@@ -28,6 +29,9 @@ class OverlayPackageArchive(
             .values
             .sortedBy { it.normalizedPath }
     }
+
+    internal suspend fun lookupLayers(): List<PackageArchive> =
+        override?.fileLookupLayers().orEmpty() + base.fileLookupLayers()
 
     override suspend fun readText(path: String, variantUid: String?): String? {
         if (path.packRelativePathOrNull() == SETTINGS_PATH) {
@@ -64,13 +68,15 @@ class OverlayPackageArchive(
         return Json.encodeToString(JsonObject.serializer(), JsonObject(baseObject + overrideObject))
     }
 
-    private fun String.jsonObjectOrNull(): JsonObject? =
-        jsoncNormalizer
-            .normalize(this)
-            .mapCatching { Json.parseToJsonElement(it) as? JsonObject }
-            .getOrNull()
+    private fun String.jsonObjectOrNull(): JsonObject? = runCatching {
+        PackJson.parseToJsonElement(jsoncNormalizer.prepare(this)) as? JsonObject
+    }
+        .getOrNull()
 
     private companion object {
         const val SETTINGS_PATH = "settings.json"
     }
 }
+
+internal suspend fun PackageArchive.fileLookupLayers(): List<PackageArchive> =
+    if (this is OverlayPackageArchive) lookupLayers() else listOf(this)

@@ -1,31 +1,15 @@
-#include <jni.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
+#include "jni_utf8.h"
 #include "packsanity/lua_host.h"
 
 static PackSanityLuaState *from_handle(jlong handle) {
     return (PackSanityLuaState *)(intptr_t)handle;
 }
 
-static jstring result(JNIEnv *env, char *value) {
-    jstring converted = value == NULL ? NULL : (*env)->NewStringUTF(env, value);
-    packsanity_lua_free_string(value);
-    return converted;
-}
-static jstring call_error(JNIEnv *env, char *error) {
-    const char *resolved = error == NULL ? "Lua call failed" : error;
-    size_t length = strlen(resolved) + 7;
-    char *prefixed = malloc(length);
-    if (prefixed == NULL) {
-        packsanity_lua_free_string(error);
-        return (*env)->NewStringUTF(env, "error:Lua call failed");
-    }
-    snprintf(prefixed, length, "error:%s", resolved);
+static void throw_error(JNIEnv *env, char *error) {
+    throw_utf8(env, error == NULL ? "Lua call failed" : error);
     packsanity_lua_free_string(error);
-    return result(env, prefixed);
 }
 
 JNIEXPORT jlong JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeCreate(JNIEnv *env, jclass clazz, jlong memory, jlong instructions) {
@@ -46,80 +30,110 @@ JNIEXPORT void JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeClo
     (void)clazz;
     packsanity_lua_close(from_handle(handle));
 }
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeRegisterModule(JNIEnv *env, jclass clazz, jlong handle, jstring name, jstring source, jstring chunk) {
+JNIEXPORT void JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeRegisterModuleUtf8(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray name, jbyteArray source, jbyteArray chunk
+) {
     (void)clazz;
     char *error = NULL;
-    const char *n = (*env)->GetStringUTFChars(env, name, NULL);
-    const char *s = (*env)->GetStringUTFChars(env, source, NULL);
-    const char *c = (*env)->GetStringUTFChars(env, chunk, NULL);
-    int ok = packsanity_lua_register_module(from_handle(handle), n, s, c, &error);
-    (*env)->ReleaseStringUTFChars(env, name, n);
-    (*env)->ReleaseStringUTFChars(env, source, s);
-    (*env)->ReleaseStringUTFChars(env, chunk, c);
-    return ok ? NULL : result(env, error);
+    char *n = read_utf8(env, name, NULL);
+    char *s = read_utf8(env, source, NULL);
+    char *c = read_utf8(env, chunk, NULL);
+    if (n != NULL && s != NULL && c != NULL &&
+        !packsanity_lua_register_module(from_handle(handle), n, s, c, &error)) throw_error(env, error);
+    free(n);
+    free(s);
+    free(c);
 }
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeRegisterPackFile(JNIEnv *env, jclass clazz, jlong handle, jstring path, jbyteArray contents) {
+
+JNIEXPORT void JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeRegisterPackFileUtf8(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray path, jbyteArray contents
+) {
     (void)clazz;
-    char *error = NULL;
-    const char *p = (*env)->GetStringUTFChars(env, path, NULL);
-    jbyte *bytes = (*env)->GetByteArrayElements(env, contents, NULL);
+    char *p = read_utf8(env, path, NULL);
+    if (p == NULL) return;
     jsize length = (*env)->GetArrayLength(env, contents);
-    int ok = packsanity_lua_register_pack_file(from_handle(handle), p, (const char *)bytes, (size_t)length, &error);
-    (*env)->ReleaseStringUTFChars(env, path, p);
-    (*env)->ReleaseByteArrayElements(env, contents, bytes, JNI_ABORT);
-    return ok ? NULL : result(env, error);
+    jbyte *bytes = length == 0 ? NULL : (*env)->GetByteArrayElements(env, contents, NULL);
+    if (length == 0 || bytes != NULL) {
+        char *error = NULL;
+        int ok = packsanity_lua_register_pack_file(from_handle(handle), p, bytes, (size_t)length, &error);
+        if (bytes != NULL) (*env)->ReleaseByteArrayElements(env, contents, bytes, JNI_ABORT);
+        if (!ok) throw_error(env, error);
+    }
+    free(p);
 }
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeExecute(JNIEnv *env, jclass clazz, jlong handle, jstring source, jstring chunk) {
+
+JNIEXPORT void JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeExecuteUtf8(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray source, jbyteArray chunk
+) {
     (void)clazz;
     char *error = NULL;
-    const char *s = (*env)->GetStringUTFChars(env, source, NULL);
-    const char *c = (*env)->GetStringUTFChars(env, chunk, NULL);
-    int ok = packsanity_lua_execute(from_handle(handle), s, c, &error);
-    (*env)->ReleaseStringUTFChars(env, source, s);
-    (*env)->ReleaseStringUTFChars(env, chunk, c);
-    return ok ? NULL : result(env, error);
+    char *s = read_utf8(env, source, NULL);
+    char *c = read_utf8(env, chunk, NULL);
+    if (s != NULL && c != NULL && !packsanity_lua_execute(from_handle(handle), s, c, &error)) {
+        throw_error(env, error);
+    }
+    free(s);
+    free(c);
 }
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeSetProviderCount(JNIEnv *env, jclass clazz, jlong handle, jstring code, jint count) {
+
+JNIEXPORT void JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeSetProviderCountUtf8(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray code, jint count
+) {
     (void)clazz;
+    char *c = read_utf8(env, code, NULL);
+    if (c == NULL) return;
     char *error = NULL;
-    const char *c = (*env)->GetStringUTFChars(env, code, NULL);
-    int ok = packsanity_lua_set_provider_count(from_handle(handle), c, count, &error);
-    (*env)->ReleaseStringUTFChars(env, code, c);
-    return ok ? NULL : result(env, error);
+    if (!packsanity_lua_set_provider_count(from_handle(handle), c, count, &error)) throw_error(env, error);
+    free(c);
 }
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeCallBoolean(JNIEnv *env, jclass clazz, jlong handle, jstring name, jstring argument) {
-    (void)clazz;
-    char *error = NULL;
-    int value = 0;
-    const char *n = (*env)->GetStringUTFChars(env, name, NULL);
-    const char *a = (*env)->GetStringUTFChars(env, argument, NULL);
-    int ok = packsanity_lua_call_boolean(from_handle(handle), n, a, &value, &error);
-    (*env)->ReleaseStringUTFChars(env, name, n);
-    (*env)->ReleaseStringUTFChars(env, argument, a);
-    return ok ? (*env)->NewStringUTF(env, value ? "true" : "false") : call_error(env, error);
-}
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeCallInteger(JNIEnv *env, jclass clazz, jlong handle, jstring name, jstring argument) {
+
+JNIEXPORT jint JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeCallNumber(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray name, jbyteArray argument, jboolean boolean_result
+) {
     (void)clazz;
     char *error = NULL;
     int64_t value = 0;
-    char buffer[64];
-    const char *n = (*env)->GetStringUTFChars(env, name, NULL);
-    const char *a = (*env)->GetStringUTFChars(env, argument, NULL);
-    int ok = packsanity_lua_call_integer(from_handle(handle), n, a, &value, &error);
-    (*env)->ReleaseStringUTFChars(env, name, n);
-    (*env)->ReleaseStringUTFChars(env, argument, a);
-    if (!ok) return call_error(env, error);
-    snprintf(buffer, sizeof(buffer), "%lld", (long long)value);
-    return (*env)->NewStringUTF(env, buffer);
+    size_t length;
+    char *n = read_utf8(env, name, NULL);
+    char *a = read_utf8(env, argument, &length);
+    if (n != NULL && a != NULL) {
+        if (boolean_result) {
+            int boolean_value = 0;
+            if (!packsanity_lua_call_boolean_bytes(from_handle(handle), n, a, length, &boolean_value, &error)) {
+                throw_error(env, error);
+            }
+            value = boolean_value;
+        } else if (!packsanity_lua_call_integer_bytes(from_handle(handle), n, a, length, &value, &error)) {
+            throw_error(env, error);
+        } else if (value < INT32_MIN || value > INT32_MAX) {
+            throw_ascii(env, "java/lang/NumberFormatException", "Lua result is outside the Java int range");
+        }
+    }
+    free(n);
+    free(a);
+    return (jint)value;
 }
-JNIEXPORT jstring JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeCallString(JNIEnv *env, jclass clazz, jlong handle, jstring name, jstring argument) {
+
+JNIEXPORT jbyteArray JNICALL Java_dev_nattle_packsanity_lua_LuaNativeRuntime_nativeCallStringUtf8(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray name, jbyteArray argument
+) {
     (void)clazz;
-    char *error = NULL;
-    char *value = NULL;
-    const char *n = (*env)->GetStringUTFChars(env, name, NULL);
-    const char *a = (*env)->GetStringUTFChars(env, argument, NULL);
-    int ok = packsanity_lua_call_string(from_handle(handle), n, a, &value, &error);
-    (*env)->ReleaseStringUTFChars(env, name, n);
-    (*env)->ReleaseStringUTFChars(env, argument, a);
-    return ok ? result(env, value) : call_error(env, error);
+    jbyteArray converted = NULL;
+    size_t length;
+    char *n = read_utf8(env, name, NULL);
+    char *a = read_utf8(env, argument, &length);
+    if (n != NULL && a != NULL) {
+        char *error = NULL;
+        char *result = NULL;
+        size_t result_length;
+        if (packsanity_lua_call_string_bytes(from_handle(handle), n, a, length, &result, &result_length, &error)) {
+            converted = utf8_result(env, result, result_length);
+            packsanity_lua_free_string(result);
+        } else {
+            throw_error(env, error);
+        }
+    }
+    free(n);
+    free(a);
+    return converted;
 }

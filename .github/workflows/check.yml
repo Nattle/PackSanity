@@ -1,0 +1,27 @@
+name: Check PackSanity
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install meson ninja
+      - run: ./gradlew spotlessCheck :loader:jvmTest
+      - run: make test
+      - run: python3.13 -m unittest discover -s python/src/test/python
+      - run: python3.13 tests/test_integration.py

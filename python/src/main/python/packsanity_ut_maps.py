@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import math
 from pathlib import PurePosixPath
+from types import SimpleNamespace
 from typing import Any, TYPE_CHECKING
 import zipfile
 from packsanity_ut_models import LOGGER, TrackerAdapterError, TrackerSession, tracker_setting
+from packsanity_ut_upstream import map_entrance_status, map_event_status, map_graph_matches
 if TYPE_CHECKING:
     from BaseClasses import CollectionState
     from worlds import AutoWorld
+
+MAP_MARKER_STATUS = {"passed": "complete", "passable": "available", "impassable": "blocked"}
 
 
 def _callable_parameter_count(function: Any) -> int | None:
@@ -22,7 +26,7 @@ def _callable_parameter_count(function: Any) -> int | None:
 
 
 def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[str, Any] | None:
-    """Resolve UT's internal PopTracker map contract into JSON-only native state."""
+    """Resolve UT's PopTracker map contract into JSON-only native state."""
     config = getattr(world, "tracker_world", None)
     if config is None or self._loaded_package_path is None or self._loaded_package_root is None:
         return None
@@ -34,35 +38,49 @@ def _map_state(self, world: AutoWorld.World, session: TrackerSession) -> dict[st
 
     external = bool(setting("external_pack_key"))
     folder = setting("map_page_folder")
+    folder = folder if isinstance(folder, str) else ""
     if external and session.external_pack_path is None:
         return None
-    if not external and (not isinstance(folder, str) or not folder):
+    if not external and not folder:
         return None
-    if external:
-        folder = ""
-
     def values(name: str) -> list[str]:
         value = setting(name, [])
         if isinstance(value, str):
             return [value]
         return [entry for entry in value if isinstance(entry, str)] if isinstance(value, (list, tuple)) else []
 
-    def read_json(relative: str) -> Any:
-        archive_path = _map_asset_path(package_root, folder, relative, external)
-        archive_path = archive_path.removeprefix("external-pack/") if external else archive_path
-        with zipfile.ZipFile(session.external_pack_path if external else self._loaded_package_path) as archive:
-            return json.loads(archive.read(archive_path))
-
     if session.map_assets is None:
+        map_files = values("map_page_maps")
+        location_files = values("map_page_locations")
+        external_json = external and not folder
+
+        def read_json(archive: zipfile.ZipFile, relative: str) -> Any:
+            path = _map_asset_path(package_root, folder, relative, external_json)
+            if external_json:
+                path = path.removeprefix("external-pack/")
+            return json.loads(archive.read(path))
+
         try:
-            maps = [entry for path in values("map_page_maps") for entry in _json_list(read_json(path), "maps")
-                    if isinstance(entry, dict)]
-            location_nodes = [entry for path in values("map_page_locations") for entry in _json_list(read_json(path), "locations")]
+            if external and folder:
+                # UT uses internal JSON for hybrid packs. Older PackSanity configurations
+                # can also declare a folder while storing every definition in the companion.
+                with zipfile.ZipFile(self._loaded_package_path) as archive:
+                    internal_files = set(archive.namelist())
+                external_json = not any(
+                    _map_asset_path(package_root, folder, path, False) in internal_files
+                    for path in (*map_files, *location_files)
+                )
+            source = session.external_pack_path if external_json else self._loaded_package_path
+            with zipfile.ZipFile(source) as archive:
+                maps = [entry for path in map_files for entry in _json_list(read_json(archive, path), "maps")
+                        if isinstance(entry, dict)]
+                location_nodes = [entry for path in location_files
+                                  for entry in _json_list(read_json(archive, path), "locations")]
         except (
             OSError, KeyError, UnicodeDecodeError, zipfile.BadZipFile,
             json.JSONDecodeError, TrackerAdapterError,
         ) as error:
-            if external:
+            if external_json:
                 LOGGER.warning("Installed companion map pack does not match the APWorld: %s", error)
                 session.external_pack_path = None
                 return None
@@ -223,8 +241,8 @@ def _update_graph_markers(
     if map_state is None or not session.map_sections:
         return
     aliases = tracker_setting(world.tracker_world, "poptracker_entrance_mapping")
-    if not isinstance(aliases, dict):
-        aliases = {}
+    aliases = {name: target for name, target in aliases.items() if isinstance(target, str)} \
+        if isinstance(aliases, dict) else {}
     entrances = {entry.name: entry for entry in session.multiworld.get_entrances(session.player)}
     events = {
         entry.name: entry for entry in session.multiworld.get_locations(session.player)
@@ -233,11 +251,9 @@ def _update_graph_markers(
     hidden_entrances = getattr(world, "ut_map_page_hidden_entrances", {}) or {}
     hidden_events = getattr(world, "ut_map_page_hidden_events", {}) or {}
     hidden_checks = getattr(world, "ut_map_page_hidden_locations", {}) or {}
-    entrance_status = {}
-    event_status = {}
-
-    def status(reachable, complete):
-        return "complete" if reachable and complete else "available" if reachable else "blocked"
+    progress = SimpleNamespace(state=state)
+    graph = {"entrance": (entrances, map_entrance_status), "event": (events, map_event_status)}
+    statuses = {"entrance": {}, "event": {}}
 
     maps = []
     for asset in map_state["maps"]:
@@ -248,29 +264,16 @@ def _update_graph_markers(
         pins = {}
         for placement, names in session.map_sections.get(map_id, ()):
             for name in names:
-                alias = aliases.get(name)
-                entrance_names = (name, alias) if isinstance(alias, str) and alias != name else (name,)
-                for entrance_name in entrance_names:
-                    if entrance_name in hidden_entrance_names:
-                        continue
-                    entrance = entrances.get(entrance_name)
-                    if entrance is None:
-                        continue
-                    if entrance_name not in entrance_status:
-                        entrance_status[entrance_name] = status(
-                            entrance.can_reach(state), entrance.connected_region is not None
-                        )
-                    entry = {"id": entrance_name, "name": name, "status": entrance_status[entrance_name]}
-                    key = ("entrance", placement["x"], placement["y"])
-                    pins.setdefault(key, {**placement, "kind": "entrance", "entries": {}})["entries"][entrance_name] = entry
-                event = events.get(name)
-                if event is not None and name not in hidden_event_names:
-                    if name not in event_status:
-                        reachable = event.parent_region.can_reach(state)
-                        event_status[name] = status(reachable, reachable and event.can_reach(state))
-                    entry = {"id": name, "name": name, "status": event_status[name]}
-                    key = ("event", placement["x"], placement["y"])
-                    pins.setdefault(key, {**placement, "kind": "event", "entries": {}})["entries"][name] = entry
+                for kind, target in map_graph_matches(
+                    {"name": name}, entrances, hidden_entrance_names, aliases, events, hidden_event_names
+                ):
+                    cache = statuses[kind]
+                    if target not in cache:
+                        objects, status = graph[kind]
+                        cache[target] = MAP_MARKER_STATUS[status(objects[target], progress)]
+                    entry = {"id": target, "name": name, "status": cache[target]}
+                    key = (kind, placement["x"], placement["y"])
+                    pins.setdefault(key, {**placement, "kind": kind, "entries": {}})["entries"][target] = entry
         markers = [{**pin, "entries": list(pin["entries"].values())} for pin in pins.values()]
         updated = dict(asset)
         if markers:
