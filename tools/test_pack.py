@@ -363,7 +363,8 @@ def seed_source(files: dict[str, bytes]) -> str:
     return "\n".join(setup + statements) + "\n"
 
 
-def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int, variant: str) -> list[str]:
+def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int,
+        variant: str, variant_flags: list[str]) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="packsanity-pack-") as temp:
         root = Path(temp)
         total = 0
@@ -389,6 +390,7 @@ def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int, 
         startup = root / "packsanity_startup.lua"
         startup.write_text("\n".join([
             f"Tracker.ActiveVariantUID = {lua_string(variant)}",
+            f"PackSanitySetArchipelagoFlags({lua_strings(variant_flags)})",
             *modules,
             "assert(ScriptHost:LoadScript('scripts/init.lua'), __packsanity_last_load_error)",
         ]), encoding="utf-8")
@@ -420,10 +422,14 @@ def main() -> int:
         files, source = read_archive(options.source)
         root_files = resolve_root(files)
         variant, selected, manifest = select_variant(root_files, options.variant)
+        variant_metadata = (manifest.get("variants") or {}).get(variant, {})
+        flags = variant_metadata.get("flags", []) if isinstance(variant_metadata, dict) else None
+        if not isinstance(flags, list) or any(not isinstance(flag, str) for flag in flags):
+            raise PackError(f"variant {variant!r} flags must be an array of strings")
         if options.pack_io_limit <= 0:
             raise PackError("--pack-io-limit must be positive")
         warnings = api_warnings(selected)
-        warnings.extend(run(selected, host, options.bootstrap, options.pack_io_limit, variant))
+        warnings.extend(run(selected, host, options.bootstrap, options.pack_io_limit, variant, flags))
         report = {"status": "boot_passed", "source": source, "package_uid": manifest["package_uid"], "variant": variant, "warnings": warnings}
         print(json.dumps(report, sort_keys=True) if options.json else f"PASS {manifest['package_uid']} (variant: {variant})")
         for warning in warnings:

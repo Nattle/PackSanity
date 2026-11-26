@@ -120,9 +120,13 @@ class LuaPackRuntimeLoader(
                     ?.flags
                     .orEmpty()
             runtime.execute(
-                "Archipelago.__allows_location_checks=${("apmanual" in variantFlags)};" +
-                    "Archipelago.__allows_location_scouts=" +
-                    "${("apmanual" in variantFlags || "aphintgame" in variantFlags)}",
+                variantFlags.joinToString(
+                    separator = ",",
+                    prefix = "PackSanitySetArchipelagoFlags({",
+                    postfix = "})",
+                ) {
+                    it.toLuaSeedLiteral()
+                },
                 "@packsanity/archipelago_capabilities.lua",
             )
             definitions?.let { parsed ->

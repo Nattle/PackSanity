@@ -71,10 +71,10 @@ assert(Tracker:AddItems('items/example.json'))
 assert(PackSanityRegisteredPaths('items') == 'items/example.json')
 assert(ScriptHost:RunStringAsync('return 42', {}, function(value) assert(value == 42) end))
 
-Archipelago.__allows_location_scouts = true
+PackSanitySetArchipelagoFlags({'ap', 'aphintgame'})
 assert(not Archipelago:StatusUpdate(Archipelago.ClientStatus.GOAL))
 assert(not Archipelago:LocationChecks({1}))
-Archipelago.__allows_location_checks = true
+PackSanitySetArchipelagoFlags({'apmanual'})
 assert(not Archipelago:LocationChecks({1, '2'}))
 assert(Archipelago:LocationChecks({1, 2}))
 assert(Archipelago:LocationScouts({3}, true))
