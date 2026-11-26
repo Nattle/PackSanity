@@ -1,4 +1,4 @@
-project('packsanity', 'c', version: '0.1.2', meson_version: '>=1.3.0',
+project('packsanity', 'c', version: '0.1.3', meson_version: '>=1.3.0',
   license: 'MIT', default_options: ['c_std=c99', 'warning_level=2', 'default_library=static'])
 
 cc = meson.get_compiler('c')
@@ -95,17 +95,23 @@ install_headers('native/include/packsanity/lua_host.h',
   'native/include/packsanity/python_host.h', subdir: 'packsanity')
 install_data('LICENSE', 'THIRD_PARTY_NOTICES.md',
   install_dir: get_option('datadir') / 'packsanity' / 'notices')
-install_data('lua/host.lua', install_dir: get_option('datadir') / 'packsanity')
+host_python = find_program('python3')
+fs = import('fs')
+host_fragments = []
+foreach name : fs.read('lua/poptracker_host/fragments.txt').strip().split('\n')
+  host_fragments += files('lua/poptracker_host/' + name + '.lua')
+endforeach
+bootstrap = custom_target('poptracker-host', input: host_fragments, output: 'host.lua',
+  command: [host_python, files('lua/assemble_host.py'), '@OUTPUT@', '@INPUT@'],
+  install: true, install_dir: get_option('datadir') / 'packsanity')
 
 if get_option('tests')
   limits = executable('packsanity-native-limits', 'tests/native_limits.c', dependencies: lua_dep)
   test('native-limits', limits)
-  test_python = find_program('python3')
-  bootstrap = meson.current_source_dir() / 'lua/host.lua'
   fixture = meson.current_source_dir() / 'tests/fixtures/minimal'
-  test('minimal-pack', test_python, args: [files('tools/test_pack.py'), fixture,
+  test('minimal-pack', host_python, args: [files('tools/test_pack.py'), fixture,
     '--host', lua_runner, '--bootstrap', bootstrap])
-  test('zip-pack', test_python, args: [files('tests/test_runner.py'), fixture,
+  test('zip-pack', host_python, args: [files('tests/test_runner.py'), fixture,
     lua_runner.full_path(), bootstrap])
   test('host-conformance', lua_runner, args: ['--bootstrap', bootstrap,
     '--execute', meson.current_source_dir() / 'tests/host_conformance.lua'])

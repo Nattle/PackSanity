@@ -7,3 +7,9 @@ val PopJson = Json {
     isLenient = true
     explicitNulls = false
 }
+
+internal val PackJson =
+    Json(PopJson) {
+        allowComments = true
+        allowTrailingComma = true
+    }

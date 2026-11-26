@@ -12,8 +12,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import urllib.parse
-import urllib.request
 import zipfile
 
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -46,101 +44,77 @@ def normalized_path(value: str) -> str:
 
 
 def remove_jsonc(source: str) -> str:
-    """Remove JavaScript-style comments without touching quoted strings."""
-    output, index, quoted = [], 0, False
+    """Remove comments and extra commas while preserving string values and token boundaries."""
+    output = []
+    index = 0
+    comma = None
     while index < len(source):
         char = source[index]
-        if quoted:
-            output.append(char)
-            if char == "\\" and index + 1 < len(source):
-                index += 1
-                output.append(source[index])
-            elif char == '"':
-                quoted = False
-        elif char == '"':
-            quoted = True
-            output.append(char)
-        elif source.startswith("//", index):
-            index = source.find("\n", index)
-            if index < 0:
-                break
-            output.append("\n")
-        elif source.startswith("/*", index):
+        if char == '"':
+            start = index
+            index += 1
+            while index < len(source):
+                if source[index] == '"':
+                    index += 1
+                    break
+                index += 2 if source[index] == "\\" else 1
+            output.append(source[start:index])
+            comma = None
+            continue
+        if source.startswith("//", index):
+            end = source.find("\n", index + 2)
+            index = len(source) if end < 0 else end
+            continue
+        if source.startswith("/*", index):
             end = source.find("*/", index + 2)
             if end < 0:
                 raise PackError("unterminated JSONC block comment")
-            output.append("\n" * source[index:end + 2].count("\n"))
-            index = end + 1
-        else:
-            output.append(char)
+            output.append(" " + "\n" * source.count("\n", index, end + 2))
+            index = end + 2
+            continue
+        if char == ',':
+            if comma is not None:
+                output[comma] = ""
+            comma = len(output)
+        elif not char.isspace():
+            if comma is not None and char in "}]":
+                output[comma] = ""
+            comma = None
+        output.append(char)
         index += 1
-    normalized = "".join(output)
-    return re.sub(r",\s*([}\]])", r"\1", normalized)
+    return "".join(output)
 
 
 def read_archive(source: str) -> tuple[dict[str, bytes], str]:
-    source_path = Path(source)
-    temporary = None
-    if source_path.is_file():
-        archive_path = source_path
-        label = str(source_path)
-    elif source_path.is_dir():
+    path = Path(source)
+    if path.is_dir():
         files = {}
-        for candidate in source_path.rglob("*"):
+        for candidate in path.rglob("*"):
             if candidate.is_file():
-                files[normalized_path(candidate.relative_to(source_path).as_posix())] = candidate.read_bytes()
-        return files, str(source_path)
-    elif source.startswith(("https://", "http://")):
-        temporary = download_source(source)
-        archive_path = temporary
-        label = source
-    else:
+                files[normalized_path(candidate.relative_to(path).as_posix())] = candidate.read_bytes()
+        return files, str(path)
+    if not path.is_file():
         raise PackError(f"source does not exist: {source}")
-    try:
-        if archive_path.stat().st_size > MAX_ARCHIVE_BYTES:
-            raise PackError(f"archive exceeds {MAX_ARCHIVE_BYTES} byte compressed limit")
-        with zipfile.ZipFile(archive_path) as archive:
-            infos = archive.infolist()
-            if len(infos) > MAX_ENTRIES:
-                raise PackError(f"archive has more than {MAX_ENTRIES} entries")
-            files, expanded = {}, 0
-            for info in infos:
-                if info.is_dir():
-                    continue
-                if stat.S_ISLNK(info.external_attr >> 16):
-                    raise PackError(f"archive contains a symbolic link: {info.filename}")
-                path = normalized_path(info.filename)
-                if info.file_size > MAX_ENTRY_BYTES:
-                    raise PackError(f"archive entry is too large: {path}")
-                expanded += info.file_size
-                if expanded > MAX_UNCOMPRESSED_BYTES:
-                    raise PackError("archive exceeds uncompressed size limit")
-                files[path] = archive.read(info)
-            return files, label
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-
-
-def download_source(source: str) -> Path:
-    parsed = urllib.parse.urlparse(source)
-    parts = [part for part in parsed.path.split("/") if part]
-    url = source
-    if parsed.netloc.lower() == "github.com" and len(parts) >= 2 and not parsed.path.endswith(".zip"):
-        owner, repository = parts[:2]
-        ref = parts[3] if len(parts) >= 4 and parts[2] in {"tree", "blob"} else None
-        endpoint = f"https://api.github.com/repos/{owner}/{repository}/zipball"
-        url = f"{endpoint}/{urllib.parse.quote(ref)}" if ref else endpoint
-    request = urllib.request.Request(url, headers={"User-Agent": "PackSanity/0.1", "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        with tempfile.NamedTemporaryFile(prefix="packsanity-", suffix=".zip", delete=False) as target:
-            total = 0
-            while chunk := response.read(1024 * 1024):
-                total += len(chunk)
-                if total > MAX_ARCHIVE_BYTES:
-                    raise PackError(f"download exceeds {MAX_ARCHIVE_BYTES} byte limit")
-                target.write(chunk)
-            return Path(target.name)
+    if path.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise PackError(f"archive exceeds {MAX_ARCHIVE_BYTES} byte compressed limit")
+    with zipfile.ZipFile(path) as archive:
+        infos = archive.infolist()
+        if len(infos) > MAX_ENTRIES:
+            raise PackError(f"archive has more than {MAX_ENTRIES} entries")
+        files, expanded = {}, 0
+        for info in infos:
+            if info.is_dir():
+                continue
+            if stat.S_ISLNK(info.external_attr >> 16):
+                raise PackError(f"archive contains a symbolic link: {info.filename}")
+            relative = normalized_path(info.filename)
+            if info.file_size > MAX_ENTRY_BYTES:
+                raise PackError(f"archive entry is too large: {relative}")
+            expanded += info.file_size
+            if expanded > MAX_UNCOMPRESSED_BYTES:
+                raise PackError("archive exceeds uncompressed size limit")
+            files[relative] = archive.read(info)
+        return files, str(path)
 
 
 def resolve_root(files: dict[str, bytes]) -> dict[str, bytes]:
@@ -170,25 +144,18 @@ def select_variant(files: dict[str, bytes], requested: str | None) -> tuple[str,
     variants = manifest.get("variants") or {}
     if not isinstance(variants, dict):
         raise PackError("manifest variants must be an object")
-    active = requested if requested in variants else "standard" if "standard" in variants else next(iter(variants), "standard")
-    selected = {}
+    if requested is not None and requested not in (variants or {"standard": {}}):
+        raise PackError(f"unknown variant: {requested}")
+    active = requested or ("standard" if "standard" in variants else next(iter(variants), "standard"))
+    selected, overlay = {}, {}
     for path, contents in files.items():
         first, separator, remaining = path.partition("/")
         if separator and first in variants:
             if first == active:
-                selected[remaining] = contents
+                overlay[remaining] = contents
         else:
             selected[path] = contents
-    return active, selected, manifest
-
-
-def module_names(path: str) -> list[str]:
-    canonical = path[:-4]
-    names = {canonical, canonical.replace("/", ".")}
-    if canonical.startswith("scripts/"):
-        short = canonical.removeprefix("scripts/")
-        names.update({short, short.replace("/", ".")})
-    return sorted(names)
+    return active, selected | overlay, manifest
 
 
 def api_warnings(files: dict[str, bytes]) -> list[str]:
@@ -263,12 +230,11 @@ def slug(value: str) -> str:
     return re.sub(r"(^-+|-+$)", "", re.sub(r"[^a-z0-9]+", "-", value.lower())) or "unnamed"
 
 
-def read_json_records(contents: bytes) -> list[dict]:
+def read_json(contents: bytes) -> object:
     try:
-        decoded = json.loads(remove_jsonc(contents.decode("utf-8-sig")))
+        return json.loads(remove_jsonc(contents.decode("utf-8-sig")))
     except (UnicodeDecodeError, json.JSONDecodeError, PackError):
-        return []
-    return decoded if isinstance(decoded, list) else []
+        return None
 
 
 def item_seed_source(path: str, records: list[dict]) -> list[str]:
@@ -343,54 +309,90 @@ def location_seed_source(path: str, records: list[dict]) -> list[str]:
     return statements
 
 
+def lua_table(entries) -> str:
+    return "{" + ",".join(f"[{lua_string(key)}]={value}" for key, value in entries) + "}"
+
+
+def path_key(path: str) -> str:
+    return path.lower().replace("ς", "σ")
+
+
 def seed_source(files: dict[str, bytes]) -> str:
     statements = []
-    registrations = {"items": set(), "locations": set()}
-    for contents in files.values():
-        text = contents.decode("utf-8", errors="replace")
-        for kind, method in (("items", "AddItems"), ("locations", "AddLocations")):
-            registrations[kind].update(
-                re.findall(r"Tracker\s*:\s*" + method + r"\s*\(\s*['\"]([^'\"]+)", text)
-            )
+    shapes = []
+    folded_paths = {}
     for path, contents in sorted(files.items()):
-        normalized = path.lower()
-        is_json = normalized.endswith((".json", ".jsonc"))
-        if is_json and (normalized.startswith("items/") or path in registrations["items"]):
-            statements.extend(item_seed_source(path, read_json_records(contents)))
-        elif is_json and (normalized.startswith("locations/") or path in registrations["locations"]):
-            statements.extend(location_seed_source(path, read_json_records(contents)))
-    return "\n".join(statements) + "\n"
+        folded_paths.setdefault(path_key(path), path)
+        start = contents.removeprefix(b"\xef\xbb\xbf").lstrip()[:1]
+        if start not in (b"[", b"{", b"/"):
+            continue
+        parsed = read_json(contents)
+        if isinstance(parsed, dict):
+            shapes.append((path, "false"))
+        if not isinstance(parsed, list):
+            continue
+        shapes.append((path, "true"))
+        records = [record for record in parsed if isinstance(record, dict)]
+        folder = path.split("/", 1)[0].lower()
+        if any(
+            record.keys() & {"codes", "stages", "item_left", "item_right", "max_quantity"}
+            or isinstance(record.get("type"), str)
+            or isinstance(record.get("name"), str) and folder in {"items", "items.json"}
+            for record in records
+        ):
+            statements.extend(item_seed_source(path, records))
+        if any(
+            record.keys() & {"sections", "children", "map_locations", "parent", "access_rules", "visibility_rules"}
+            or isinstance(record.get("name"), str) and (len(record) == 1 or folder in {"locations", "locations.json"})
+            for record in records
+        ):
+            statements.extend(location_seed_source(path, records))
+    max_code_point = 0x10FFFF if any(any(ord(char) > 0xFFFF for char in path) for path in files) else 0xFFFF
+    case_keys = lua_table(
+        (character, lua_string(key))
+        for character in map(chr, range(0x80, max_code_point + 1))
+        if (key := path_key(character)) != character
+    )
+    exact_paths = lua_table((path, "true") for path in files)
+    folded_lookup = lua_table((key, lua_string(path)) for key, path in folded_paths.items())
+    lookup_layers = "{{" + exact_paths + "," + folded_lookup + "}}"
+    setup = [
+        f"PackSanitySetDefinitionCaseKeys({case_keys})",
+        f"PackSanitySetDefinitionPaths('', {lookup_layers}, {lua_table(shapes)})",
+    ]
+    return "\n".join(setup + statements) + "\n"
 
 
-def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int) -> list[str]:
-    if "scripts/init.lua" not in files:
-        raise PackError("pack does not contain scripts/init.lua for the selected variant")
+def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int, variant: str) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="packsanity-pack-") as temp:
         root = Path(temp)
         total = 0
         skipped = []
+        modules = []
         command = [host, "--bootstrap", bootstrap]
         for path, contents in sorted(files.items()):
             extension = path.rsplit(".", 1)[-1].lower() if "." in path else ""
             if extension in OMITTED_EXTENSIONS:
                 continue
-            if not path.endswith(".lua") and total + len(contents) > pack_io_limit:
+            if extension != "lua" and total + len(contents) > pack_io_limit:
                 skipped.append(path)
                 continue
             total += len(contents)
-            destination = root / path
+            destination = root / "pack" / path
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(contents)
             command.extend(["--pack-file", f"{path}={destination}"])
+            if extension == "lua":
+                modules.append(f"PackSanityRegisterPackModule({lua_string(path)})")
         staging = root / "packsanity_seed.lua"
         staging.write_text(seed_source(files), encoding="utf-8")
-        command.extend(["--execute", str(staging)])
-        for path in sorted(files):
-            if path.endswith(".lua") and path != "scripts/init.lua":
-                destination = root / path
-                for name in module_names(path):
-                    command.extend(["--lazy-module", f"{name}={destination}"])
-        command.extend(["--execute", str(root / "scripts/init.lua")])
+        startup = root / "packsanity_startup.lua"
+        startup.write_text("\n".join([
+            f"Tracker.ActiveVariantUID = {lua_string(variant)}",
+            *modules,
+            "assert(ScriptHost:LoadScript('scripts/init.lua'), __packsanity_last_load_error)",
+        ]), encoding="utf-8")
+        command.extend(["--execute", str(staging), "--execute", str(startup)])
         completed = subprocess.run(command, capture_output=True, text=True)
         if completed.returncode:
             stderr = completed.stderr.strip().splitlines()
@@ -404,10 +406,10 @@ def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int) 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", help="a pack directory, ZIP file, direct ZIP URL, or GitHub repository URL")
+    parser.add_argument("source", help="a local pack directory or ZIP file")
     parser.add_argument("--variant", help="variant UID; defaults to standard then the first manifest variant")
     parser.add_argument("--host", default=os.environ.get("PACKSANITY_LUA", "packsanity-lua"), help="packsanity-lua executable")
-    parser.add_argument("--bootstrap", default=str(Path(__file__).resolve().parents[1] / "lua" / "host.lua"))
+    parser.add_argument("--bootstrap", default=str(Path(__file__).resolve().parents[1] / "build" / "meson" / "host.lua"))
     parser.add_argument("--pack-io-limit", type=int, default=DEFAULT_PACK_IO_BYTES, help="maximum non-media PackIO bytes registered with Lua (default: 96 MiB)")
     parser.add_argument("--json", action="store_true", help="emit a machine-readable report")
     options = parser.parse_args()
@@ -421,13 +423,13 @@ def main() -> int:
         if options.pack_io_limit <= 0:
             raise PackError("--pack-io-limit must be positive")
         warnings = api_warnings(selected)
-        warnings.extend(run(selected, host, options.bootstrap, options.pack_io_limit))
+        warnings.extend(run(selected, host, options.bootstrap, options.pack_io_limit, variant))
         report = {"status": "boot_passed", "source": source, "package_uid": manifest["package_uid"], "variant": variant, "warnings": warnings}
         print(json.dumps(report, sort_keys=True) if options.json else f"PASS {manifest['package_uid']} (variant: {variant})")
         for warning in warnings:
             print(f"WARN {warning}", file=sys.stderr)
         return 0
-    except (PackError, OSError, subprocess.CalledProcessError, urllib.error.URLError, zipfile.BadZipFile) as error:
+    except (PackError, OSError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
         print(f"FAIL {error}", file=sys.stderr)
         return 1
 

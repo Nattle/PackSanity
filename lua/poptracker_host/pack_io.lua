@@ -4,6 +4,9 @@ local pack_files, input_file = {}, nil
 function PackSanityRegisterPackFile(path, contents)
 if type(path) == 'string' and type(contents) == 'string' then pack_files[path] = contents end
 end
+function PackSanityRegisterPackModule(path)
+PackSanityRegisterModule(path, assert(pack_files[path], 'Missing pack script: '..path))
+end
 local function pack_relative_path(path)
 if type(path) ~= 'string' then return nil end
 path = path:gsub('\\', '/'):gsub('^%./', ''):gsub('^/+', '')

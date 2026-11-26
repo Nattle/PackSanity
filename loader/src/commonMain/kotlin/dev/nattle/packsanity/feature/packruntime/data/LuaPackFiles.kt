@@ -25,15 +25,12 @@ internal suspend fun seedLuaPackFiles(
             .filterNot { it.isDirectory }
             .filter { entry -> entry.isLuaReadablePackFile() }
             .toList()
+    val knownVariants = variantUids.toSet()
     val selectedEntries = linkedMapOf<String, PackageArchiveEntry>()
     entries.forEach { entry ->
         val path = entry.normalizedPath
         val resolvedPath =
-            when {
-                path.startsWith("$activeVariantUid/") -> path.removePrefix("$activeVariantUid/")
-                path.substringBefore('/') in variantUids -> null
-                else -> path
-            }?.takeIf { it.isNotBlank() } ?: return@forEach
+            path.effectiveVariantPath(activeVariantUid, knownVariants) ?: return@forEach
         val existing = selectedEntries[resolvedPath]
         if (existing == null || path.startsWith("$activeVariantUid/")) {
             selectedEntries[resolvedPath] = entry
@@ -94,7 +91,7 @@ internal suspend fun seedLuaPackFiles(
  * rendered by the host and are never required for pack configuration, mappings, or rules, so
  * copying them into the PackIO table would make otherwise valid map packs fail during Lua startup.
  */
-private fun PackageArchiveEntry.isLuaReadablePackFile(): Boolean {
+internal fun PackageArchiveEntry.isLuaReadablePackFile(): Boolean {
     val extension = normalizedPath.substringAfterLast('.', missingDelimiterValue = "").lowercase()
     return extension !in NON_LUA_PACK_FILE_EXTENSIONS
 }

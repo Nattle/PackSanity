@@ -26,6 +26,11 @@ int packsanity_lua_set_provider_count(PackSanityLuaState *state, const char *cod
 int packsanity_lua_call_boolean(PackSanityLuaState *state, const char *function_name, const char *argument, int *result, char **error);
 int packsanity_lua_call_integer(PackSanityLuaState *state, const char *function_name, const char *argument, int64_t *result, char **error);
 int packsanity_lua_call_string(PackSanityLuaState *state, const char *function_name, const char *argument, char **result, char **error);
+/* Lengths count bytes and exclude the terminating NUL. These variants also accept NULs in the
+ * argument and report their presence in the string result by returning its full length. */
+int packsanity_lua_call_boolean_bytes(PackSanityLuaState *state, const char *function_name, const char *argument, size_t length, int *result, char **error);
+int packsanity_lua_call_integer_bytes(PackSanityLuaState *state, const char *function_name, const char *argument, size_t length, int64_t *result, char **error);
+int packsanity_lua_call_string_bytes(PackSanityLuaState *state, const char *function_name, const char *argument, size_t length, char **result, size_t *result_length, char **error);
 void packsanity_lua_free_string(char *value);
 
 #ifdef __cplusplus

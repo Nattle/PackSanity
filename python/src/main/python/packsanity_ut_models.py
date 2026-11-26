@@ -35,4 +35,5 @@ class TrackerSession:
     entrance_pairings_by_storage_key: dict[str, dict[str, str]] | None = None
     external_pack_path: Path | None = None
     yaml_options: dict[str, Any] | None = None
+    rebuild_after_failed_update: bool = False
 

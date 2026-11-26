@@ -1,15 +1,23 @@
 # Compatibility matrix
 
+PackSanity targets a headless subset of the upstream contracts. See the
+[PopTracker pack interface](https://github.com/black-sliver/PopTracker/blob/master/doc/PACKS.md),
+[PopTracker autotracking interface](https://github.com/black-sliver/PopTracker/blob/master/doc/AUTOTRACKING.md),
+the integration guides included in the pinned
+[Universal Tracker release](https://github.com/FarisTheAncient/Archipelago/releases/tag/Tracker_v0.3.3),
+and the Archipelago [APWorld specification](https://github.com/ArchipelagoMW/Archipelago/blob/main/docs/apworld%20specification.md)
+and [0.6.8 network protocol](https://github.com/ArchipelagoMW/Archipelago/blob/54803be064fc7e80c4628777ed0b46a9390f255f/docs/network%20protocol.md).
+
 ## PopTracker
 
 | API or capability | PackSanity behavior |
 | --- | --- |
 | Lua runtime | Lua 5.4.9 with memory and instruction budgets. |
-| `scripts/init.lua`, `require` | Registered pack modules with slash and dotted aliases. |
-| `Tracker:AddItems/Maps/Locations/Layouts/Classes` | The loader parses files registered by the selected variant and retains registration order. |
-| Tracker objects, providers, rules, code/frame/location handlers | PopTracker 0.36 compatibility surface with bounded refreshes, live provider counts, hosted items, and canonical region access. JSON item codes are case-insensitive. |
+| `scripts/init.lua`, `require`, `ScriptHost:LoadScript` | Pack-only script loading. `require` tries a `.lua` file and then a directory's `init.lua` under `scripts/` before trying the archive root. Results are cached by the requested module name. `LoadScript` executes the specified archive script on each call and returns a success boolean. |
+| `Tracker:AddItems/Maps/Locations/Layouts/Classes` | The loader resolves paths for the active variant and retains registration order. Successful item registrations create separate providers with distinct model IDs. An invalid record in an item array is skipped while valid records are loaded. A missing path, malformed JSON, or wrong top-level JSON type returns `false` and does not become a registration. Declared location parents resolve against locations registered by earlier calls. |
+| Tracker objects, providers, rules, code/frame/location handlers | PopTracker 0.36 compatibility surface with bounded refreshes, live provider counts, hosted items, and canonical region access. JSON item codes are case-insensitive. Lua sees the pack's original section path in `FullID`, and state snapshots use stable model IDs. |
 | Pack `io` | Read-only access to registered in-memory files. |
-| Archipelago callbacks | The host dispatches callbacks and queues outgoing commands. The caller handles networking. |
+| Archipelago callbacks | The host dispatches callbacks and queues outgoing commands. Checks and status updates require `apmanual`. Scouts accept `apmanual` or `aphintgame`. The caller handles networking. |
 | `ScriptHost:RunScriptAsync`, `RunStringAsync` | Run synchronously. |
 | `AutoTracker` memory reads and watches | Reads return `0`. Watch registration returns `false`. |
 | `ScriptHost` memory and variable watches | Watch registration returns `false`. |
@@ -28,14 +36,19 @@ Consumers supply any override archives.
 | Capability | PackSanity behavior |
 | --- | --- |
 | Archive and version gates | Validates package structure and declared container and AP versions. [Supported Archipelago core version](../python/runtime.lock.json) |
-| Imports | Uses staged dependencies. The core includes `worlds.AutoSNIClient` for registration imports. The pure-Python JSON fallback supports `loads` and `dumps` through both `import orjson` and `from orjson import orjson`. |
+| Imports | Uses staged dependencies. Registration imports can use `worlds.AutoSNIClient` and the pinned Archipelago `Generate.roll_settings` helper. The pure-Python JSON fallback supports `loads` and `dumps` through both `import orjson` and `from orjson import orjson`. |
 | Reconstruction | Uses seed slot data and flat player YAML when required. Runs `generate_early`, `create_regions`, `create_items`, `set_rules`, `connect_entrances`, and `generate_basic`. Weighted YAML, triggers, linked options, plando, and seed fill are outside scope. |
-| State and maps | Replays inventory, checks, reachability, and world-declared map, entrance, and storage projections. Accepts a companion map archive. |
+| State and maps | Replays inventory, checks, reachability, and world-declared map, entrance, and storage projections. Accepts companion maps, including Universal Tracker's mode with APWorld JSON and companion images. |
 | Session lifecycle | One subinterpreter per C handle, with independent overlapping handles and serialized calls. Switch world archives through a new handle or process. |
 
 Consumers accumulate partial network packets. An explicit `missing_locations` list,
 including an empty list, makes the checked and missing IDs authoritative. A changed
 complete slot-data snapshot rebuilds the graph and replays state before publishing it.
+The consumer replaces the item history on `ReceivedItems` index zero and merges check
+updates from `RoomUpdate` into its accumulated snapshot before calling the runtime.
+
+Use the upstream lowercase APWorld filename and package root for portable archives.
+The loader also accepts legacy mixed casing and normalizes it for embedded imports.
 
 Map assets expose numbered check placements and separate graph markers for entrances and
 code-less events. Sections match graph names directly or use `poptracker_entrance_mapping`.

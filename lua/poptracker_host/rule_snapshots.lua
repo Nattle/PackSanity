@@ -39,16 +39,20 @@ return table.concat(paths, '\31')
 end
 function PackSanityRegisteredLoadEvents(_) return table.concat(registered_load_events, '\31') end
 function PackSanityRegisterPreloadedFile(kind, path)
-if type(kind) == 'string' and type(path) == 'string' then register_paths(kind, path) end
+if type(kind) == 'string' and type(path) == 'string' then load_registered_paths(kind, path) end
 end
 
 function PackSanityLocationHighlights(_)
 local records = {}
 local seen = {}
 for _, object in pairs(tracker_objects) do
-    if object.Type == 'location' and object.FullID and not seen[object.FullID] then
-        seen[object.FullID] = true
-        table.insert(records, object.FullID..'\30'..tostring(object.Highlight or Highlight.None))
+    if object.__packsanity_location_placeholder then
+        object = find_location_reference(object.__packsanity_location_id) or object
+    end
+    local id = object.__packsanity_location_id
+    if id and not seen[id] then
+        seen[id] = true
+        table.insert(records, id..'\30'..tostring(object.Highlight or Highlight.None))
     end
 end
 table.sort(records)

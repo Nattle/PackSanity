@@ -16,6 +16,7 @@ __packsanity_provider_counts = __packsanity_provider_counts or {}
 local registered_paths = {}
 local registered_load_events = {}
 local tracker_objects = {}
+local item_objects_by_id = {}
 local item_objects_by_code = {}
 local custom_items = {}
 local custom_items_by_potential_code = {}
@@ -70,21 +71,6 @@ for _, name in ipairs(names) do
 end
 end
 
-local function register_paths(kind, ...)
-for index = 1, select('#', ...) do
-    local value = select(index, ...)
-    if type(value) == 'table' then
-        for _, path in ipairs(value) do
-            registered_paths[path] = kind
-            table.insert(registered_load_events, kind..'\30'..path)
-        end
-    elseif type(value) == 'string' then
-        registered_paths[value] = kind
-        table.insert(registered_load_events, kind..'\30'..value)
-    end
-end
-end
-
 local function attach_overlay_methods(object)
 object.BadgeText = object.BadgeText or ''
 object.BadgeTextColor = object.BadgeTextColor or ''
@@ -103,15 +89,21 @@ BulkUpdate = false,
 AllowDeferredLogicUpdate = false,
 }
 local function load_registered_paths(kind, ...)
-register_paths(kind, ...)
+local loaded = true
 local function activate(value)
-    if type(value) == 'string' then activate_staged_objects(kind, value)
+    if type(value) == 'string' then
+        if activate_staged_objects(kind, value) then
+            registered_paths[value] = kind
+            table.insert(registered_load_events, kind..'\30'..value)
+        else
+            loaded = false
+        end
     elseif type(value) == 'table' then for _, path in ipairs(value) do activate(path) end end
 end
 for index = 1, select('#', ...) do
     activate(select(index, ...))
 end
-return true
+return loaded
 end
 function Tracker:AddItems(...) return load_registered_paths('items', ...) end
 function Tracker:AddMaps(...) return load_registered_paths('maps', ...) end

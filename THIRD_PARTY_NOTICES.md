@@ -32,6 +32,7 @@ staged payload's `notices/` folder. Distribute those notices with any runtime bu
 Pathspec source is staged unmodified; preserve its source and MPL obligations when distributing.
 The trimmed Archipelago payload is upstream source with a selected-world namespace and narrowly
 scoped tracker-only import templates, not the upstream desktop tracker application.
+The staged `Generate.py` contains Archipelago's option-rolling routines for APWorld imports.
 
 Kotlin, kotlinx.coroutines and kotlinx.serialization dependencies use the Apache 2.0 license.
 Their published artifacts are resolved through Gradle; retain relevant dependency notices in
@@ -44,9 +45,11 @@ Their notices are in the AAR under `assets/packsanity/notices/`.
 ## Universal Tracker 0.3.3 (MIT)
 
 The build verifies the pinned Universal Tracker release archive and stages
-the headless generation, item replay, and event sweep routines from
-`TrackerCore.py`. PackSanity also adapts the entrance storage-key handling
-from `TrackerClient.py`. [Universal Tracker 0.3.3 release](https://github.com/FarisTheAncient/Archipelago/releases/tag/Tracker_v0.3.3)
+the headless generation, starting inventory filtering, item validation, item
+replay, and event sweep routines from `TrackerCore.py`. It also stages the
+map entrance and event matching and reachability rules from `TrackerClient.py`. PackSanity
+adapts the client's entrance storage-key handling.
+[Universal Tracker 0.3.3 release](https://github.com/FarisTheAncient/Archipelago/releases/tag/Tracker_v0.3.3)
 
 The [upstream license](python/licenses/UniversalTracker-MIT.txt) is included in
 the staged runtime as `notices/UniversalTracker-MIT.txt`.

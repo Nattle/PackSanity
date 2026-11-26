@@ -63,7 +63,8 @@ games, `--slot N` and `--slot-name NAME` to select player identity, and
 
 The check validates archive and runtime compatibility, imports the world, reconstructs
 its tracker graph, and verifies that referenced map images and marker icons exist in
-the APWorld or companion ZIP. Run third-party APWorlds in a disposable environment.
+the APWorld or companion ZIP. An explicit `--external-pack` fails verification if the
+world cannot use that ZIP. Run third-party APWorlds in a disposable environment.
 They execute Python code with the process's filesystem and network access.
 
 A scenario can supply initial `slot_data`, `updates`, and final `expect`.

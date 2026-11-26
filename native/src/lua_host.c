@@ -27,7 +27,11 @@ static char *copy_string(const char *value) {
 }
 
 static int fail_from_stack(lua_State *lua, char **error) {
-    if (error != NULL) *error = copy_string(lua_tostring(lua, -1));
+    if (error != NULL) {
+        const char *message = lua_type(lua, -1) == LUA_TSTRING
+            ? lua_tostring(lua, -1) : luaL_typename(lua, -1);
+        *error = copy_string(message);
+    }
     lua_pop(lua, 1);
     return 0;
 }
@@ -248,100 +252,257 @@ void packsanity_lua_end_refresh(PackSanityLuaState *state) {
 void packsanity_lua_close(PackSanityLuaState *state) { if (state != NULL) { lua_close(state->lua); free(state); } }
 void packsanity_lua_free_string(char *value) { free(value); }
 
-int packsanity_lua_register_module(PackSanityLuaState *state, const char *name, const char *source, const char *chunk_name, char **error) {
-    if (state == NULL) { if (error) *error = copy_string("Lua runtime is closed"); return 0; }
+/* Each operation enters Lua protection before looking up pack-controlled globals or
+ * pushing data. The bounded allocator can fail even while preparing a call. */
+static int run_operation(PackSanityLuaState *state, lua_CFunction operation, void *args,
+                         int results, char **error) {
+    if (error != NULL) *error = NULL;
+    if (state == NULL) {
+        if (error != NULL) *error = copy_string("Lua runtime is closed");
+        return 0;
+    }
     if (refresh_failed(state, error)) return 0;
-    lua_State *lua = state->lua; begin_execution(state);
-    lua_getglobal(lua, "package"); lua_getfield(lua, -1, "preload");
-    int status = luaL_loadbufferx(lua, source, strlen(source), chunk_name, "t");
-    if (status == LUA_OK) { lua_setfield(lua, -2, name); lua_pop(lua, 2); }
-    else { lua_remove(lua, -2); lua_remove(lua, -2); }
+    lua_State *lua = state->lua;
+    if (!lua_checkstack(lua, 2)) {
+        if (error != NULL) *error = copy_string("Could not grow Lua stack");
+        return 0;
+    }
+    begin_execution(state);
+    lua_pushcfunction(lua, operation);
+    lua_pushlightuserdata(lua, args);
+    int status = lua_pcall(lua, 1, results, 0);
+    if (state->call_exhausted && status == LUA_OK) {
+        lua_pop(lua, results);
+        end_execution(state);
+        if (!refresh_failed(state, error) && error != NULL) {
+            *error = copy_string("Lua instruction limit exceeded");
+        }
+        return 0;
+    }
     return execution_result(state, status, error);
 }
+
+struct source_args {
+    const char *source;
+    size_t length;
+    const char *chunk_name;
+    const char *module_name;
+    int lazy;
+};
 
 static int lazy_module_loader(lua_State *lua) {
     size_t source_length = 0;
     const char *source = lua_tolstring(lua, lua_upvalueindex(1), &source_length);
     const char *chunk_name = lua_tostring(lua, lua_upvalueindex(2));
     int arguments = lua_gettop(lua);
-    int status = luaL_loadbufferx(lua, source, source_length, chunk_name, "t");
-    if (status != LUA_OK) return lua_error(lua);
+    if (luaL_loadbufferx(lua, source, source_length, chunk_name, "t") != LUA_OK) {
+        return lua_error(lua);
+    }
     lua_insert(lua, 1);
     lua_call(lua, arguments, LUA_MULTRET);
     return lua_gettop(lua);
 }
 
-int packsanity_lua_register_lazy_module(PackSanityLuaState *state, const char *name, const char *source, const char *chunk_name, char **error) {
-    if (state == NULL) { if (error) *error = copy_string("Lua runtime is closed"); return 0; }
-    if (refresh_failed(state, error)) return 0;
-    if (name == NULL || source == NULL || chunk_name == NULL) { if (error) *error = copy_string("Invalid Lua module"); return 0; }
-    lua_State *lua = state->lua;
-    lua_getglobal(lua, "package"); lua_getfield(lua, -1, "preload");
-    lua_pushstring(lua, source); lua_pushstring(lua, chunk_name);
-    lua_pushcclosure(lua, lazy_module_loader, 2);
-    lua_setfield(lua, -2, name); lua_pop(lua, 2);
-    return 1;
+static int register_module(lua_State *lua) {
+    struct source_args *args = lua_touserdata(lua, 1);
+    lua_getglobal(lua, "package");
+    lua_getfield(lua, -1, "preload");
+    if (!lua_istable(lua, -1)) return luaL_error(lua, "Lua module registry is unavailable");
+    if (args->lazy) {
+        lua_pushlstring(lua, args->source, args->length);
+        lua_pushstring(lua, args->chunk_name);
+        lua_pushcclosure(lua, lazy_module_loader, 2);
+    } else if (luaL_loadbufferx(lua, args->source, args->length, args->chunk_name, "t") != LUA_OK) {
+        return lua_error(lua);
+    }
+    lua_setfield(lua, -2, args->module_name);
+    return 0;
 }
 
-int packsanity_lua_register_pack_file(PackSanityLuaState *state, const char *path, const void *contents, size_t contents_length, char **error) {
-    if (state == NULL) { if (error) *error = copy_string("Lua runtime is closed"); return 0; }
-    if (refresh_failed(state, error)) return 0;
-    if (path == NULL || (contents == NULL && contents_length != 0)) { if (error) *error = copy_string("Invalid pack file"); return 0; }
-    lua_State *lua = state->lua;
+int packsanity_lua_register_module(PackSanityLuaState *state, const char *name, const char *source,
+                                  const char *chunk_name, char **error) {
+    if (name == NULL || source == NULL || chunk_name == NULL) {
+        if (error != NULL) *error = copy_string("Invalid Lua module");
+        return 0;
+    }
+    struct source_args args = {source, strlen(source), chunk_name, name, 0};
+    return run_operation(state, register_module, &args, 0, error);
+}
+
+int packsanity_lua_register_lazy_module(PackSanityLuaState *state, const char *name, const char *source,
+                                       const char *chunk_name, char **error) {
+    if (name == NULL || source == NULL || chunk_name == NULL) {
+        if (error != NULL) *error = copy_string("Invalid Lua module");
+        return 0;
+    }
+    struct source_args args = {source, strlen(source), chunk_name, name, 1};
+    return run_operation(state, register_module, &args, 0, error);
+}
+
+struct pack_file_args {
+    const char *path;
+    const char *contents;
+    size_t length;
+};
+
+static int register_pack_file(lua_State *lua) {
+    struct pack_file_args *args = lua_touserdata(lua, 1);
     lua_getglobal(lua, "PackSanityRegisterPackFile");
-    if (!lua_isfunction(lua, -1)) { lua_pop(lua, 1); if (error) *error = copy_string("Pack file registration is unavailable"); return 0; }
-    lua_pushstring(lua, path);
-    lua_pushlstring(lua, contents == NULL ? "" : (const char *)contents, contents_length);
-    begin_execution(state);
-    int status = lua_pcall(lua, 2, 0, 0);
-    return execution_result(state, status, error);
+    if (!lua_isfunction(lua, -1)) return luaL_error(lua, "Pack file registration is unavailable");
+    lua_pushstring(lua, args->path);
+    lua_pushlstring(lua, args->contents, args->length);
+    lua_call(lua, 2, 0);
+    return 0;
 }
 
-int packsanity_lua_execute(PackSanityLuaState *state, const char *source, const char *chunk_name, char **error) {
-    if (state == NULL) { if (error) *error = copy_string("Lua runtime is closed"); return 0; }
-    if (refresh_failed(state, error)) return 0;
-    begin_execution(state); int status = luaL_loadbufferx(state->lua, source, strlen(source), chunk_name, "t");
-    if (status == LUA_OK) status = lua_pcall(state->lua, 0, 0, 0);
-    return execution_result(state, status, error);
+int packsanity_lua_register_pack_file(PackSanityLuaState *state, const char *path, const void *contents,
+                                     size_t contents_length, char **error) {
+    if (path == NULL || (contents == NULL && contents_length != 0)) {
+        if (error != NULL) *error = copy_string("Invalid pack file");
+        return 0;
+    }
+    struct pack_file_args args = {path, contents == NULL ? "" : contents, contents_length};
+    return run_operation(state, register_pack_file, &args, 0, error);
 }
 
-int packsanity_lua_set_provider_count(PackSanityLuaState *state, const char *code, int count, char **error) {
-    if (state == NULL) { if (error) *error = copy_string("Lua runtime is closed"); return 0; }
-    if (refresh_failed(state, error)) return 0;
-    lua_State *lua = state->lua; lua_getglobal(lua, "__packsanity_provider_counts");
-    if (!lua_istable(lua, -1)) { lua_pop(lua, 1); if (error) *error = copy_string("Provider count table is unavailable"); return 0; }
-    lua_pushinteger(lua, count); lua_setfield(lua, -2, code); lua_pop(lua, 1); lua_getglobal(lua, "PackSanityProviderCountChanged");
-    if (!lua_isfunction(lua, -1)) { lua_pop(lua, 1); return 1; }
-    lua_pushstring(lua, code); lua_pushinteger(lua, count); begin_execution(state);
-    int status = lua_pcall(lua, 2, 0, 0); return execution_result(state, status, error);
+static int execute(lua_State *lua) {
+    struct source_args *args = lua_touserdata(lua, 1);
+    if (luaL_loadbufferx(lua, args->source, args->length, args->chunk_name, "t") != LUA_OK) {
+        return lua_error(lua);
+    }
+    lua_call(lua, 0, 0);
+    return 0;
 }
 
-static int prepare_call(PackSanityLuaState *state, const char *function_name, const char *argument, char **error) {
-    if (state == NULL) { if (error) *error = copy_string("Lua runtime is closed"); return 0; }
-    if (refresh_failed(state, error)) return 0;
-    lua_getglobal(state->lua, function_name);
-    if (!lua_isfunction(state->lua, -1)) { lua_pop(state->lua, 1); if (error) *error = copy_string("Lua function was not found"); return 0; }
-    lua_pushstring(state->lua, argument); begin_execution(state);
-    int status = lua_pcall(state->lua, 1, 1, 0);
-    if (status == LUA_OK && state->call_exhausted) lua_pop(state->lua, 1);
-    return execution_result(state, status, error);
+int packsanity_lua_execute(PackSanityLuaState *state, const char *source, const char *chunk_name,
+                          char **error) {
+    if (source == NULL || chunk_name == NULL) {
+        if (error != NULL) *error = copy_string("Invalid Lua source");
+        return 0;
+    }
+    struct source_args args = {source, strlen(source), chunk_name, NULL, 0};
+    return run_operation(state, execute, &args, 0, error);
 }
 
-int packsanity_lua_call_boolean(PackSanityLuaState *state, const char *function_name, const char *argument, int *result, char **error) {
-    if (!prepare_call(state, function_name, argument, error)) return 0;
-    *result = lua_toboolean(state->lua, -1); lua_pop(state->lua, 1); return 1;
+struct provider_args {
+    const char *code;
+    int count;
+};
+
+static int set_provider_count(lua_State *lua) {
+    struct provider_args *args = lua_touserdata(lua, 1);
+    lua_getglobal(lua, "__packsanity_provider_counts");
+    if (!lua_istable(lua, -1)) return luaL_error(lua, "Provider count table is unavailable");
+    lua_pushinteger(lua, args->count);
+    lua_setfield(lua, -2, args->code);
+    lua_getglobal(lua, "PackSanityProviderCountChanged");
+    if (lua_isfunction(lua, -1)) {
+        lua_pushstring(lua, args->code);
+        lua_pushinteger(lua, args->count);
+        lua_call(lua, 2, 0);
+    }
+    return 0;
 }
 
-int packsanity_lua_call_integer(PackSanityLuaState *state, const char *function_name, const char *argument, int64_t *result, char **error) {
-    if (!prepare_call(state, function_name, argument, error)) return 0;
-    int is_number = 0; lua_Integer value = lua_tointegerx(state->lua, -1, &is_number);
-    *result = is_number ? (int64_t)value : (lua_isboolean(state->lua, -1) && lua_toboolean(state->lua, -1) ? 1 : 0);
-    lua_pop(state->lua, 1); return 1;
+int packsanity_lua_set_provider_count(PackSanityLuaState *state, const char *code, int count,
+                                     char **error) {
+    if (code == NULL) {
+        if (error != NULL) *error = copy_string("Invalid provider code");
+        return 0;
+    }
+    struct provider_args args = {code, count};
+    return run_operation(state, set_provider_count, &args, 0, error);
 }
 
-int packsanity_lua_call_string(PackSanityLuaState *state, const char *function_name, const char *argument, char **result, char **error) {
-    if (!prepare_call(state, function_name, argument, error)) return 0;
-    *result = copy_string(lua_tostring(state->lua, -1)); lua_pop(state->lua, 1);
-    if (*result == NULL) { if (error) *error = copy_string("Could not allocate Lua result"); return 0; }
+enum call_type { CALL_BOOLEAN, CALL_INTEGER, CALL_STRING };
+struct call_args {
+    const char *name;
+    const char *argument;
+    size_t length;
+    enum call_type type;
+};
+
+static int call_function(lua_State *lua) {
+    struct call_args *args = lua_touserdata(lua, 1);
+    if (args->name == NULL) return luaL_error(lua, "Lua function name is missing");
+    lua_getglobal(lua, args->name);
+    if (!lua_isfunction(lua, -1)) return luaL_error(lua, "Lua function was not found");
+    if (args->argument == NULL) lua_pushnil(lua);
+    else lua_pushlstring(lua, args->argument, args->length);
+    lua_call(lua, 1, 1);
+    /* Converting a numeric result to a string may allocate. */
+    if (args->type == CALL_STRING) lua_tostring(lua, -1);
     return 1;
+}
+
+int packsanity_lua_call_boolean_bytes(PackSanityLuaState *state, const char *name,
+                                     const char *argument, size_t length, int *result, char **error) {
+    if (result == NULL) {
+        if (error != NULL) *error = copy_string("Boolean result pointer is missing");
+        return 0;
+    }
+    struct call_args args = {name, argument, length, CALL_BOOLEAN};
+    if (!run_operation(state, call_function, &args, 1, error)) return 0;
+    *result = lua_toboolean(state->lua, -1);
+    lua_pop(state->lua, 1);
+    return 1;
+}
+
+int packsanity_lua_call_integer_bytes(PackSanityLuaState *state, const char *name,
+                                     const char *argument, size_t length, int64_t *result, char **error) {
+    if (result == NULL) {
+        if (error != NULL) *error = copy_string("Integer result pointer is missing");
+        return 0;
+    }
+    struct call_args args = {name, argument, length, CALL_INTEGER};
+    if (!run_operation(state, call_function, &args, 1, error)) return 0;
+    int is_number = 0;
+    lua_Integer value = lua_tointegerx(state->lua, -1, &is_number);
+    *result = is_number ? (int64_t)value
+        : (lua_isboolean(state->lua, -1) && lua_toboolean(state->lua, -1) ? 1 : 0);
+    lua_pop(state->lua, 1);
+    return 1;
+}
+
+int packsanity_lua_call_string_bytes(PackSanityLuaState *state, const char *name,
+                                    const char *argument, size_t length, char **result,
+                                    size_t *result_length, char **error) {
+    if (result == NULL || result_length == NULL) {
+        if (error != NULL) *error = copy_string("String result pointer is missing");
+        return 0;
+    }
+    *result = NULL;
+    *result_length = 0;
+    struct call_args args = {name, argument, length, CALL_STRING};
+    if (!run_operation(state, call_function, &args, 1, error)) return 0;
+    const char *value = lua_tolstring(state->lua, -1, result_length);
+    if (value == NULL) {
+        value = "Unknown Lua error";
+        *result_length = strlen(value);
+    }
+    *result = malloc(*result_length + 1);
+    if (*result != NULL) memcpy(*result, value, *result_length + 1);
+    lua_pop(state->lua, 1);
+    if (*result != NULL) return 1;
+    if (error != NULL) *error = copy_string("Could not allocate Lua result");
+    return 0;
+}
+
+int packsanity_lua_call_boolean(PackSanityLuaState *state, const char *name, const char *argument,
+                               int *result, char **error) {
+    return packsanity_lua_call_boolean_bytes(state, name, argument,
+        argument == NULL ? 0 : strlen(argument), result, error);
+}
+
+int packsanity_lua_call_integer(PackSanityLuaState *state, const char *name, const char *argument,
+                               int64_t *result, char **error) {
+    return packsanity_lua_call_integer_bytes(state, name, argument,
+        argument == NULL ? 0 : strlen(argument), result, error);
+}
+
+int packsanity_lua_call_string(PackSanityLuaState *state, const char *name, const char *argument,
+                              char **result, char **error) {
+    size_t result_length;
+    return packsanity_lua_call_string_bytes(state, name, argument,
+        argument == NULL ? 0 : strlen(argument), result, &result_length, error);
 }

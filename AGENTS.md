@@ -15,6 +15,11 @@ to tests. Preserve the public PopTracker APIs, APWorld gates, standard PopTracke
 - `test-pack.sh`, `test-world.sh`: developer-facing integrations; no silently skipped failures.
 
 This repo is standalone. Do not use external apps or their test helpers as build or test dependencies.
+Before adding or maintaining APWorld behavior, check the pinned Universal Tracker and Archipelago
+sources for the same logic. Prefer calling upstream APIs or staging the smallest reusable upstream
+routine from the verified source. Remove the local duplicate when upstream covers it. Keep PackSanity
+code focused on the headless runtime boundary and compatibility differences, and verify those
+differences with regression scenarios. Preserve upstream notices when staging routines.
 Changes must be original or properly attributed/licensed. Maintain THIRD_PARTY_NOTICES.md and source
 licenses. Never distribute another author's real pack fixture without permission.
 

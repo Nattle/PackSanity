@@ -1,5 +1,6 @@
 package dev.nattle.packsanity.ut;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -20,7 +21,7 @@ public final class PythonNativeRuntime implements AutoCloseable {
 
     public PythonNativeRuntime(String pythonHome, String modulePath) {
         try {
-            handle = onWorker(() -> nativeCreate(pythonHome, modulePath));
+            handle = onWorker(() -> nativeCreateUtf8(utf8(pythonHome), utf8(modulePath)));
         } catch (RuntimeException | Error error) {
             worker.shutdown();
             throw error;
@@ -53,7 +54,9 @@ public final class PythonNativeRuntime implements AutoCloseable {
 
     private synchronized String call(int operation, String requestJson) {
         long activeHandle = requireHandle();
-        return onWorker(() -> nativeCall(activeHandle, operation, requestJson));
+        return onWorker(() -> new String(
+            nativeCallUtf8(activeHandle, operation, utf8(requestJson)), StandardCharsets.UTF_8
+        ));
     }
 
     private long requireHandle() {
@@ -87,7 +90,12 @@ public final class PythonNativeRuntime implements AutoCloseable {
     @FunctionalInterface
     private interface CheckedSupplier<T> { T get(); }
 
-    private static native long nativeCreate(String pythonHome, String modulePath);
+    private static byte[] utf8(String value) {
+        if (value.indexOf(0) >= 0) throw new IllegalArgumentException("Python path or JSON contains a NUL");
+        return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static native long nativeCreateUtf8(byte[] pythonHome, byte[] modulePath);
     private static native void nativeClose(long handle);
-    private static native String nativeCall(long handle, int operation, String requestJson);
+    private static native byte[] nativeCallUtf8(long handle, int operation, byte[] requestJson);
 }

@@ -115,6 +115,11 @@ def check_world(args, source: Path):
                     raise RuntimeError(f"Map image not found in APWorld: {image}")
             for snapshot in snapshots:
                 map_state = snapshot.get("map") or {}
+                if args.external_pack and not any(
+                    asset.get("image_path", "").startswith("external-pack/")
+                    for asset in map_state.get("maps", [])
+                ):
+                    raise RuntimeError(f"APWorld could not use companion map pack: {args.external_pack}")
                 for map_item in map_state.get("maps", []):
                     validate_image(map_item.get("image_path"))
                 for marker in map_state.get("player_markers", []):

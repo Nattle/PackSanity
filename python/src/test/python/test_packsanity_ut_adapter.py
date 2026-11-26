@@ -120,6 +120,37 @@ class PositionContractTest(unittest.TestCase):
             self.assertIsNone(self.tracker._map_state(world, session))
             self.assertIsNone(session.external_pack_path)
 
+    def test_hybrid_map_uses_world_definitions_and_companion_image(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            apworld = Path(directory) / "example_world.apworld"
+            companion = Path(directory) / "companion.zip"
+            with zipfile.ZipFile(apworld, "w") as archive:
+                archive.writestr("example_world/tracker/maps.json", '[{"name":"world","img":"world.png"}]')
+                archive.writestr("example_world/tracker/locations.json", '[{"name":"Town",'
+                                 '"sections":[{"name":"Chest"}],'
+                                 '"map_locations":[{"map":"world","x":12,"y":20}]}]')
+            with zipfile.ZipFile(companion, "w") as archive:
+                archive.writestr("world.png", b"image")
+                archive.writestr("maps.json", '[{"name":"other","img":"other.png"}]')
+            self.tracker._loaded_package_path = apworld
+            world = types.SimpleNamespace(
+                location_name_to_id={"Chest": 42},
+                tracker_world={
+                    "external_pack_key": "pack_path",
+                    "map_page_folder": "tracker",
+                    "map_page_maps": "maps.json",
+                    "map_page_locations": "locations.json",
+                },
+            )
+            session = TrackerSession("Example", 4, "Player", 0, {}, object())
+            session.external_pack_path = companion
+
+            state = self.tracker._map_state(world, session)
+
+            self.assertEqual("world", state["active_map_id"])
+            self.assertEqual("external-pack/world.png", state["maps"][0]["image_path"])
+            self.assertEqual([{"location_id": 42, "x": 12.0, "y": 20.0}], state["maps"][0]["locations"])
+
     def test_invalid_cached_companion_does_not_abort_initialization(self) -> None:
         class FakeWorld:
             ut_can_gen_without_yaml = True
@@ -136,7 +167,7 @@ class PositionContractTest(unittest.TestCase):
                     create=True,
                 ),
                 mock.patch.object(self.tracker, "_build_multiworld", return_value=multiworld),
-                mock.patch.object(self.tracker, "update", return_value=expected),
+                mock.patch.object(self.tracker, "_project_update", return_value=expected),
             ):
                 result = self.tracker.initialize(
                     game="Example",
@@ -174,7 +205,7 @@ class PrecollectedInventoryContractTest(unittest.TestCase):
             mock.patch("packsanity_ut_adapter.AutoWorld.AutoWorldRegister",
                        types.SimpleNamespace(world_types={"Example": FakeWorld}), create=True),
             mock.patch.object(tracker, "_build_multiworld", return_value=multiworld),
-            mock.patch.object(tracker, "update", side_effect=first_replay),
+            mock.patch.object(tracker, "_project_update", side_effect=first_replay),
         ):
             tracker.initialize("Example", 1, "Player", {})
 

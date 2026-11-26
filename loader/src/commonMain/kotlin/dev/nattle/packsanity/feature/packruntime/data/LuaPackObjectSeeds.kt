@@ -1,65 +1,82 @@
 package dev.nattle.packsanity.feature.packruntime.data
 
-import dev.nattle.packsanity.feature.packruntime.data.schema.RawItem
-import dev.nattle.packsanity.feature.packruntime.data.schema.RawItemStage
+import dev.nattle.packsanity.feature.packageimport.data.packPathCaseMappings
+import dev.nattle.packsanity.feature.packageimport.data.supplementaryPackPathCaseMappings
 import dev.nattle.packsanity.feature.packruntime.domain.model.LoadedTrackerPackage
+import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerItem
 import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerItemKind
 import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerLocation
+import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerLocationSection
 import dev.nattle.packsanity.feature.packruntime.domain.rules.RuleExpression
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 
-internal fun LoadedTrackerPackage.toLuaObjectSeed(): String = buildString {
-    items.forEach { item ->
-        val type =
-            when (item.kind) {
-                TrackerItemKind.Toggle -> "toggle"
-                TrackerItemKind.Static -> "static"
-                TrackerItemKind.Progressive -> "progressive"
-                TrackerItemKind.ProgressiveToggle -> "progressive_toggle"
-                TrackerItemKind.Consumable -> "consumable"
-                TrackerItemKind.CompositeToggle -> "composite_toggle"
-                TrackerItemKind.ToggleBadged -> "toggle_badged"
-                TrackerItemKind.Unknown -> "unknown"
-            }
-        append("PackSanityStageItem(")
-        append(item.sourcePath?.toLuaSeedLiteral() ?: "nil").append(',')
-        append(item.id.toLuaSeedLiteral()).append(',')
-        append(type.toLuaSeedLiteral()).append(',')
-        append(item.maxQuantity ?: -1).append(',')
-        append(if (item.initiallyActive) "true" else "false").append(',')
-        append(if (item.allowDisabled) "true" else "false").append(',')
-        append(item.initialStageIndex).append(',')
-        append(item.initialQuantity).append(',')
-        append(item.minQuantity).append(',')
-        append(item.increment).append(',')
-        append(item.decrement).append(',')
-        append(item.imagePath?.toLuaSeedLiteral() ?: "nil").append(',')
-        append('{')
-        item.baseCodes.forEachIndexed { index, code ->
-            if (index > 0) append(',')
-            append(code.toLuaSeedLiteral())
+internal fun LoadedTrackerPackage.toLuaObjectSeed(
+    paths: LuaDefinitionPaths,
+    variantUid: String,
+): String = buildString {
+    val itemDefinitions = items.withIndex().groupBy { it.value.sourcePath }
+    val repeatedItemIdPrefix = items.repeatedItemIdPrefix()
+    val locationDefinitions = locations.groupBy { it.sourcePath }
+    val hasSupplementaryPaths =
+        paths.layers.any { layer -> layer.availablePaths.any { it.any(Char::isHighSurrogate) } }
+    append("PackSanitySetDefinitionCaseKeys({")
+    for ((character, key) in packPathCaseMappings) appendCaseKey(character, key)
+    if (hasSupplementaryPaths) {
+        for ((character, key) in supplementaryPackPathCaseMappings) appendCaseKey(character, key)
+    }
+    append("})\n")
+    append("PackSanitySetDefinitionPaths(").append(variantUid.toLuaSeedLiteral()).append(",{")
+    for (layer in paths.layers) {
+        append("{{")
+        for (path in layer.availablePaths) {
+            append('[').append(path.toLuaSeedLiteral()).append("]=true,")
         }
         append("},{")
-        item.stages.forEachIndexed { stageIndex, stage ->
-            if (stageIndex > 0) append(',')
-            append("{codes={")
-            stage.codes.forEachIndexed { codeIndex, code ->
-                if (codeIndex > 0) append(',')
-                append(code.toLuaSeedLiteral())
-            }
-            append("},inherit=").append(if (stage.inheritCodes) "true" else "false").append('}')
-        }
-        append("},")
-        append(if (item.loops) "true" else "false").append(',')
-        append(item.baseItemCode?.toLuaSeedLiteral() ?: "nil").append(',')
-        append(item.compositeLeftCode?.toLuaSeedLiteral() ?: "nil").append(',')
-        append(item.compositeRightCode?.toLuaSeedLiteral() ?: "nil")
-        append(")\n")
+        for ((key, path) in layer.pathsByLowercase) appendCaseKey(key, path)
+        append("}},")
     }
-    locations.forEach { location -> appendLocationSeeds(location) }
+    append('}')
+    paths.jsonShapes?.let { shapes ->
+        append(",{")
+        for ((file, isArray) in shapes) {
+            append('[').append(file.toLuaSeedLiteral()).append("]=")
+            append(isArray).append(',')
+        }
+        append('}')
+    }
+    append(")\n")
+    itemDefinitions.entries
+        .sortedBy { it.key }
+        .forEach { (file, definitions) ->
+            stageDefinitions("items", file) {
+                for ((index, item) in definitions) {
+                    val repeatedIdStem = file?.let {
+                        repeatedItemIdStem(repeatedItemIdPrefix, index)
+                    }
+                    appendItemSeed(item, repeatedIdStem)
+                }
+            }
+        }
+    val referenceIndex = PackSectionReferenceIndex(locations)
+    locationDefinitions.entries
+        .sortedBy { it.key }
+        .forEach { (file, definitions) ->
+            stageDefinitions("locations", file) {
+                definitions.forEach { location ->
+                    val declaredParent = location.declaredParent?.removePrefix("@").orEmpty()
+                    if (declaredParent.isNotEmpty()) {
+                        append("do local parent_path,parent_id=PackSanityLocationParent(")
+                        append(declaredParent.toLuaSeedLiteral()).append(")\n")
+                    }
+                    appendLocationTree(
+                        location,
+                        emptyList(),
+                        referenceIndex,
+                        declaredParent.isNotEmpty(),
+                    )
+                    if (declaredParent.isNotEmpty()) append("end\n")
+                }
+            }
+        }
     // A Lua access function can reference a detailed location that is registered later, or
     // one whose pack path cannot be reconstructed from the parsed tree. Give every referenced
     // `@location` a safe location object up front. A real staged location replaces this
@@ -74,130 +91,179 @@ internal fun LoadedTrackerPackage.toLuaObjectSeed(): String = buildString {
         }
 }
 
-internal fun List<RawItem>.toLuaItemSeed(): String = buildString {
-    for (index in this@toLuaItemSeed.indices) {
-        val item: RawItem = this@toLuaItemSeed[index]
-        val baseCodes = item.codes.toLuaCodeSet()
-        val effectiveStages = item.effectiveRuntimeStages()
-        val codes =
-            if (item.type == "composite_toggle") baseCodes
-            else baseCodes + effectiveStages.flatMap { stage -> stage.codes.toLuaCodeSet() }
-        if (codes.isEmpty() && item.type != "composite_toggle") continue
-        append("PackSanitySeedItem(")
-        val itemId =
-            codes.firstOrNull()
-                ?: item.name
-                    ?.lowercase()
-                    ?.replace(Regex("[^a-z0-9]+"), "-")
-                    ?.trim('-')
-                    ?.takeIf(String::isNotEmpty)
-                ?: "lua-item-$index"
-        append(itemId.toLuaSeedLiteral()).append(',')
-        append((item.type ?: "unknown").toLuaSeedLiteral()).append(',')
-        append(item.maxQuantity?.contentOrNull?.toIntOrNull() ?: -1).append(',')
-        append(if (item.initialActiveState) "true" else "false").append(',')
-        append(if (item.allowDisabled) "true" else "false").append(',')
-        append(item.initialStageIndex).append(',')
-        append(item.initialQuantity).append(',')
-        append(item.minQuantity).append(',')
-        append(item.increment).append(',')
-        append(item.decrement).append(',')
-        append(item.img?.toLuaSeedLiteral() ?: "nil").append(",{ ")
-        baseCodes.forEachIndexed { codeIndex, code ->
+private fun StringBuilder.appendCaseKey(character: String, key: String) {
+    append('[').append(character.toLuaSeedLiteral()).append("]=")
+    append(key.toLuaSeedLiteral()).append(',')
+}
+
+private inline fun StringBuilder.stageDefinitions(kind: String, file: String?, emit: () -> Unit) {
+    if (file != null) {
+        append("PackSanityStageDefinitions(")
+        append(kind.toLuaSeedLiteral()).append(',')
+        append(file.toLuaSeedLiteral()).append(",function(registration)\n")
+    }
+    emit()
+    if (file != null) append("end)\n")
+}
+
+private fun StringBuilder.appendItemSeed(item: TrackerItem, repeatedIdStem: String?) {
+    val type =
+        when (item.kind) {
+            TrackerItemKind.Toggle -> "toggle"
+            TrackerItemKind.Static -> "static"
+            TrackerItemKind.Progressive -> "progressive"
+            TrackerItemKind.ProgressiveToggle -> "progressive_toggle"
+            TrackerItemKind.Consumable -> "consumable"
+            TrackerItemKind.CompositeToggle -> "composite_toggle"
+            TrackerItemKind.ToggleBadged -> "toggle_badged"
+            TrackerItemKind.Unknown -> "unknown"
+        }
+    append("PackSanitySeedItem(")
+    val id = item.id.toLuaSeedLiteral()
+    if (repeatedIdStem == null) append(id)
+    else append("registration == 1 and $id or ${repeatedIdStem.toLuaSeedLiteral()}..registration")
+    append(',')
+    append(type.toLuaSeedLiteral()).append(',')
+    append(item.maxQuantity ?: -1).append(',')
+    append(if (item.initiallyActive) "true" else "false").append(',')
+    append(if (item.allowDisabled) "true" else "false").append(',')
+    append(item.initialStageIndex).append(',')
+    append(item.initialQuantity).append(',')
+    append(item.minQuantity).append(',')
+    append(item.increment).append(',')
+    append(item.decrement).append(',')
+    append(item.imagePath?.toLuaSeedLiteral() ?: "nil").append(',')
+    append('{')
+    item.baseCodes.forEachIndexed { index, code ->
+        if (index > 0) append(',')
+        append(code.toLuaSeedLiteral())
+    }
+    append("},{")
+    item.stages.forEachIndexed { stageIndex, stage ->
+        if (stageIndex > 0) append(',')
+        append("{codes={")
+        stage.codes.forEachIndexed { codeIndex, code ->
             if (codeIndex > 0) append(',')
             append(code.toLuaSeedLiteral())
         }
-        append("},{")
-        effectiveStages.forEachIndexed { stageIndex: Int, stage: RawItemStage ->
-            if (stageIndex > 0) append(',')
-            append("{codes={")
-            stage.codes.toLuaCodeSet().forEachIndexed { codeIndex: Int, code: String ->
-                if (codeIndex > 0) append(',')
-                append(code.toLuaSeedLiteral())
-            }
-            append("},inherit=").append(if (stage.inheritCodes) "true" else "false").append('}')
-        }
-        append("},")
-        append(if (item.loop || item.type == "progressive_toggle") "true" else "false").append(',')
-        append(item.baseItem?.toLuaSeedLiteral() ?: "nil").append(',')
-        append(item.itemLeft?.toLuaSeedLiteral() ?: "nil").append(',')
-        append(item.itemRight?.toLuaSeedLiteral() ?: "nil")
-        append(")\n")
+        append("},inherit=").append(if (stage.inheritCodes) "true" else "false").append('}')
     }
+    append("},")
+    append(if (item.loops) "true" else "false").append(',')
+    append(item.baseItemCode?.toLuaSeedLiteral() ?: "nil").append(',')
+    append(item.compositeLeftCode?.toLuaSeedLiteral() ?: "nil").append(',')
+    append(item.compositeRightCode?.toLuaSeedLiteral() ?: "nil")
+    append(")\n")
 }
 
-private fun RawItem.effectiveRuntimeStages(): List<RawItemStage> {
-    if (type != "composite_toggle") return stages
-    return (0..3).mapNotNull { state ->
-        images
-            .firstOrNull { image ->
-                image.left == (state and 1 != 0) && image.right == (state and 2 != 0)
-            }
-            ?.let { image ->
-                RawItemStage(
-                    name = image.name,
-                    img = image.img,
-                    disabledImg = image.disabledImg,
-                    codes =
-                        JsonPrimitive(
-                            when (state) {
-                                1 -> itemLeft.orEmpty()
-                                2 -> itemRight.orEmpty()
-                                3 -> listOfNotNull(itemLeft, itemRight).joinToString(",")
-                                else -> ""
-                            }
-                        ),
-                    inheritCodes = false,
-                )
-            }
-    }
-}
-
-/**
- * PopTracker Lua rules address location sections by their human-readable path (for example
- * `@Nyakuza Metro/Green Clean Station/Time Piece`), while PackSanity's internal IDs are slugged and
- * may include an occurrence suffix. Seed both forms so Lua packs can resolve their own location
- * references without coupling the runtime to our UI IDs.
- */
-private fun StringBuilder.appendLocationSeeds(
+/** Keeps pack-facing paths separate from the model IDs used in state snapshots. */
+private fun StringBuilder.appendLocationTree(
     location: TrackerLocation,
-    parentPath: List<String> = emptyList(),
+    ancestors: List<String>,
+    referenceIndex: PackSectionReferenceIndex,
+    hasDeclaredParent: Boolean,
 ) {
-    val path = parentPath + location.name
-    location.sections.forEach { section ->
-        val aliases = buildSet {
-            add("@${(path + section.name).joinToString("/")}")
-            if (section.isUnnamed) add("@${path.joinToString("/")}/")
-            section.ref?.let { ref -> add(if (ref.startsWith("@")) ref else "@$ref") }
-        }
-        append("PackSanityStageLocation(")
-        append(location.sourcePath?.toLuaSeedLiteral() ?: "nil").append(',')
-        append(section.fullId.toLuaSeedLiteral()).append(',')
-        append(section.itemCount).append(",{")
-        aliases.forEachIndexed { index, alias ->
-            if (index > 0) append(',')
-            append(alias.toLuaSeedLiteral())
-        }
-        append("},")
-        append(if (section.clearAsGroup) "true" else "false").append(",{ ")
-        section.hostedItems.forEachIndexed { index, code ->
-            if (index > 0) append(',')
-            append(code.toLuaSeedLiteral())
-        }
-        append("})\n")
-    }
-    // PopTracker exposes a location-level object in addition to its sections. Packs use it
-    // for entrance and logic-only lookups (for example `@Chapter 1 Entrances/Act 1 - Welcome
-    // to Mafia Town` and `@internal_can_complete_act/chapter1_tutorial`). PackSanity has no
-    // independently computed accessibility to mirror for this synthetic object, so leave it
-    // unevaluated like section objects. Pack logic may read this state before PackSanity has
-    // produced its first accessibility snapshot.
-    append("PackSanityStageLocation(")
-    append(location.sourcePath?.toLuaSeedLiteral() ?: "nil").append(',')
+    val path = ancestors + location.name
+    val fullPath = path.joinToString("/")
+    val prefix = "@$fullPath/"
+    val parentId =
+        location.parentId?.toLuaSeedLiteral() ?: if (hasDeclaredParent) "parent_id" else "nil"
+    append("PackSanitySeedLocation(")
     append(location.id.toLuaSeedLiteral()).append(",0,{")
-    append("@${path.joinToString("/")}".toLuaSeedLiteral())
-    append("},false,{},nil,false,true)\n")
-    location.children.forEach { child -> appendLocationSeeds(child, path) }
+    appendLocationAlias("@$fullPath", hasDeclaredParent)
+    append("},false,{},nil,false,true,false,")
+    append(parentId).append(',')
+    append(if (location.parentId == null && hasDeclaredParent) "parent_id ~= nil" else "false")
+    append(")\n")
+
+    location.sections.forEach { section ->
+        val aliases = buildList {
+            if (section.isUnnamed) add(prefix)
+            add(prefix + section.name)
+        }
+        val reference = section.ref
+        if (reference != null) {
+            appendSectionReference(
+                section,
+                prefix,
+                aliases,
+                referenceIndex.targets(reference),
+                hasDeclaredParent,
+            )
+        } else {
+            append("PackSanitySeedLocation(")
+            append(section.fullId.toLuaSeedLiteral()).append(',')
+            append(section.itemCount).append(',')
+            appendLocationAliases(aliases, hasDeclaredParent)
+            append(',').append(section.clearAsGroup).append(',')
+            appendLuaStrings(section.hostedItems)
+            append(",nil,false,false,false,").append(location.id.toLuaSeedLiteral())
+            if (hasDeclaredParent)
+                append(",false,parent_id ~= nil,").append(section.name.toLuaSeedLiteral())
+            append(")\n")
+        }
+    }
+    location.children.forEach { appendLocationTree(it, path, referenceIndex, hasDeclaredParent) }
+}
+
+private fun StringBuilder.appendSectionReference(
+    section: TrackerLocationSection,
+    prefix: String,
+    aliases: List<String>,
+    targets: PackSectionReferenceTargets,
+    hasDeclaredParent: Boolean,
+) {
+    val reference = checkNotNull(section.ref)
+    val referenceAlias = if (reference.startsWith('@')) reference else "@$reference"
+    val nameAliases =
+        (targets.exact + targets.suffix + targets.normalized)
+            .distinctBy { it.fullId }
+            .filter { target -> !target.isUnnamed || section.isUnnamed }
+            .groupBy { target -> prefix + target.name }
+            .filterKeys { it !in aliases }
+    append("PackSanitySeedLocationReference(")
+    append(section.fullId.toLuaSeedLiteral()).append(',')
+    append(section.itemCount).append(',').append(section.clearAsGroup).append(',')
+    appendLuaStrings(section.hostedItems)
+    append(',')
+    appendLocationAliases(aliases, hasDeclaredParent)
+    append(',').append(referenceAlias.toLuaSeedLiteral()).append(',')
+    for (group in listOf(targets.exact, targets.suffix, targets.normalized)) {
+        appendLuaStrings(group.map { it.fullId }.distinct())
+        append(',')
+    }
+    append('{')
+    for ((alias, sections) in nameAliases) {
+        append('[')
+        appendLocationAlias(alias, hasDeclaredParent)
+        append("]=")
+        appendLuaStrings(sections.map { it.fullId })
+        append(',')
+    }
+    append("},")
+    appendLocationAlias(prefix.dropLast(1), hasDeclaredParent)
+    append(")\n")
+}
+
+private fun StringBuilder.appendLocationAliases(values: List<String>, hasDeclaredParent: Boolean) {
+    append('{')
+    for (value in values) {
+        appendLocationAlias(value, hasDeclaredParent)
+        append(',')
+    }
+    append('}')
+}
+
+private fun StringBuilder.appendLocationAlias(value: String, hasDeclaredParent: Boolean) {
+    if (hasDeclaredParent)
+        append("'@'..parent_path..").append(value.removePrefix("@").toLuaSeedLiteral())
+    else append(value.toLuaSeedLiteral())
+}
+
+private fun StringBuilder.appendLuaStrings(values: List<String>) {
+    append('{')
+    for (value in values) append(value.toLuaSeedLiteral()).append(',')
+    append('}')
 }
 
 private fun TrackerLocation.referenceCodes(): List<String> = buildList {
@@ -223,19 +289,6 @@ private fun List<RuleExpression>.referenceCodes(): List<String> = flatMap { expr
 }
     .flatMap { rule -> LOCATION_REFERENCE_PATTERN.findAll(rule).map { it.value }.toList() }
 
-internal fun JsonElement?.toLuaCodeSet(): Set<String> =
-    when (this) {
-        is JsonPrimitive ->
-            contentOrNull
-                ?.split(',')
-                ?.map { it.trim() }
-                ?.filter { it.isNotEmpty() }
-                ?.toSet()
-                .orEmpty()
-        is JsonArray -> flatMap { it.toLuaCodeSet() }.toSet()
-        else -> emptySet()
-    }
-
 internal fun String.toLuaSeedLiteral(): String = buildString {
     append('"')
     this@toLuaSeedLiteral.forEach { character ->
@@ -244,6 +297,7 @@ internal fun String.toLuaSeedLiteral(): String = buildString {
             '"' -> append("\\\"")
             '\n' -> append("\\n")
             '\r' -> append("\\r")
+            '\u0000' -> append("\\000")
             else -> append(character)
         }
     }

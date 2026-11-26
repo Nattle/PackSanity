@@ -9,6 +9,24 @@ import kotlinx.coroutines.test.runTest
 
 class PackSanityPackParserRegistrationsTest {
     @Test
+    fun discoveryDoesNotStagePackIoLookupRecords() = runTest {
+        val lookups = List(20_000) { """{"tile":$it,"type":0}""" }.joinToString(",", "[", "]")
+        val archive =
+            ParserTestArchive(
+                files =
+                    mapOf(
+                        "manifest.json" to """{"package_uid":"test"}""",
+                        "data/lookup.json" to lookups,
+                        "data/objects.txt" to """[{"type":"toggle","codes":"key"}]""",
+                    )
+            )
+        val discovered =
+            PackSanityPackParser(logger = NoOpPopLogger).loadForLuaDiscovery(archive).getOrThrow()
+        assertEquals(listOf("key"), discovered.items.map { it.id })
+        assertTrue(discovered.locations.isEmpty())
+    }
+
+    @Test
     fun preservesDuplicateCodesFromUnregisteredFilesDuringLuaDiscovery() = runTest {
         val archive =
             ParserTestArchive(

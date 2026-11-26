@@ -19,6 +19,19 @@ failing_item.PropertyChangedFunc = function() error('conformance observer failur
 failing_item:Set('value', 1)
 assert(PackSanityDrainCallbackErrors():find('conformance observer failure', 1, true))
 
+local custom = Tracker:CreateLuaItem({ PotentialCodes = {'key'} })
+local code_changes = 0
+ScriptHost:AddWatchForCode('custom-watch', 'key', function() error('replaced watch fired') end)
+ScriptHost:AddWatchForCode('custom-watch', 'other', function() error('unrelated watch fired') end)
+ScriptHost:AddWatchForCode('active-watch', 'key', function(code)
+    assert(code == 'key' and custom:Get('amount') == 1)
+    code_changes = code_changes + 1
+end)
+custom:Set('amount', 1)
+custom:Set('amount', 1)
+assert(code_changes == 1)
+assert(PackSanityDrainCallbackErrors() == '')
+
 function ConformanceFailingRule() error('conformance rule failure') end
 assert(PackSanityEvaluateRule('ConformanceFailingRule') == 0)
 local rule_field_separator = string.char(28)
@@ -58,8 +71,11 @@ assert(Tracker:AddItems('items/example.json'))
 assert(PackSanityRegisteredPaths('items') == 'items/example.json')
 assert(ScriptHost:RunStringAsync('return 42', {}, function(value) assert(value == 42) end))
 
-Archipelago.__allows_location_checks = true
 Archipelago.__allows_location_scouts = true
+assert(not Archipelago:StatusUpdate(Archipelago.ClientStatus.GOAL))
+assert(not Archipelago:LocationChecks({1}))
+Archipelago.__allows_location_checks = true
+assert(not Archipelago:LocationChecks({1, '2'}))
 assert(Archipelago:LocationChecks({1, 2}))
 assert(Archipelago:LocationScouts({3}, true))
 assert(Archipelago:StatusUpdate(Archipelago.ClientStatus.READY))
@@ -67,3 +83,10 @@ local commands = PackSanityDrainArchipelagoCommands()
 assert(commands:find('checks\30' .. '1,2', 1, true))
 assert(commands:find('scouts\30' .. '1,3', 1, true))
 assert(commands:find('status\30' .. '10', 1, true))
+
+local large_location_id = 9007199254740991
+Archipelago.MissingLocations = {large_location_id}
+PackSanityDispatchLocation(large_location_id, 'Check')
+PackSanityDispatchLocation(large_location_id, 'Check')
+assert(#Archipelago.MissingLocations == 0 and #Archipelago.CheckedLocations == 1)
+assert(Archipelago.CheckedLocations[1] == large_location_id)

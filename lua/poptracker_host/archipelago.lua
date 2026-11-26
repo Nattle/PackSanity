@@ -36,9 +36,12 @@ if type(keys) == 'string' then keys = { keys } end
 for _, key in ipairs(keys or {}) do table.insert(ap_commands, 'notify\30'..tostring(key)) end
 end
 local function queue_location_command(kind, locations, create_as_hint)
+if type(locations) ~= 'table' then return false end
 local ids = {}
-for _, location_id in ipairs(locations or {}) do
-    if type(location_id) == 'number' then table.insert(ids, tostring(location_id)) end
+for _, location_id in ipairs(locations) do
+    local id = type(location_id) == 'number' and math.tointeger(location_id)
+    if not id then return false end
+    table.insert(ids, tostring(id))
 end
 if #ids == 0 then return false end
 if kind == 'scouts' then
@@ -77,8 +80,10 @@ end
 ap_commands = retained
 end
 function Archipelago:StatusUpdate(status)
-if type(status) ~= 'number' then return false end
-table.insert(ap_commands, 'status\30'..math.floor(status))
+if not self.__allows_location_checks then return false end
+local code = type(status) == 'number' and math.tointeger(status)
+if not code then return false end
+table.insert(ap_commands, 'status\30'..code)
 return true
 end
 function Archipelago:PlayerNumberToName(number) return self:GetPlayerAlias(number) end
@@ -98,7 +103,9 @@ if not replay then
     for index, value in ipairs(Archipelago.MissingLocations) do
         if value == location_id then table.remove(Archipelago.MissingLocations, index); break end
     end
-    table.insert(Archipelago.CheckedLocations, location_id)
+    if not list_contains_identity(Archipelago.CheckedLocations, location_id) then
+        table.insert(Archipelago.CheckedLocations, location_id)
+    end
 end
 run_handlers(ap_handlers.location, location_id, location_name)
 end
