@@ -22,9 +22,11 @@ replay used by the integration suite.
 
 | Configuration | Fixture coverage |
 | --- | --- |
-| PopTracker | Manifest and variant metadata, settings, all seven JSON item types, maps, nested sections, references, class and layout registration, and Archipelago item, check, and storage callbacks. The pack scenario expects the two mapping diagnostics emitted by the parser as well as empty missing-image and unresolved-reference lists. |
-| Universal Tracker | Internal, external, and hybrid map loading, check and entrance aliases, map-specific visibility, automatic map selection, player coordinates, deferred entrance and event markers, and slot-data reconstruction. The fixture declares both desktop navigation options in their respective modes. PackSanity exercises the map state while map navigation rendering belongs to the desktop client. |
+| PopTracker | Manifest and variant metadata, settings, all seven JSON item types, a hosted Lua item, a pack settings popup, and Archipelago item, check, storage, scout, and bounce callbacks. The survey terminal covers a cross-file parent, an unnamed grouped section, map-pin visibility, and Lua, count, optional, and inspect rules. The pack scenario expects the parser's two mapping diagnostics and empty missing-image and unresolved-reference lists. |
+| Universal Tracker | Internal, external, and hybrid map loading, check and entrance aliases, map-specific visibility, automatic map selection, multiple position markers on the active map, deferred entrance and event markers, and slot-data reconstruction. The fixture declares both desktop navigation options in their respective modes. PackSanity exercises the map state while map navigation rendering belongs to the desktop client. |
 | Archipelago | APWorld source metadata, inherited common YAML options, a game-specific toggle, item and location tables, regions, entrances, an event, and seed-shaped slot data. The replay verifies YAML exclusion groups, server check membership, inventory, and reachability before and after reconstruction. |
+
+The hosted Lua item uses `PotentialCodes`, available in PopTracker 0.35.4 and later.
 
 For companion testing, ZIP the contents of `tests/fixtures/signal-station` at the
 archive root and pass the ZIP to `--external-pack`. Add `"map_source": "external"`
@@ -33,6 +35,37 @@ that copy and the player YAML. The integration suite verifies that the crate pin
 comes from the companion JSON in external mode and from the APWorld JSON in hybrid mode.
 
 [Upstream interfaces and the headless compatibility scope](compatibility-matrix.md)
+
+## Upstream contracts covered by the regression tests
+
+- Pack-relative ZIP lookup follows PopTracker's variant-before-root search. PackSanity
+  prefers exact spelling within each search location for deterministic case collisions.
+  The Pikmin 2 tracker prompted the case-folded image lookup regression.
+  [PopTracker 0.36.0 pack lookup](https://github.com/black-sliver/PopTracker/blob/575ee4b29be8e555b7bfa4895e4206f246b399be/src/core/pack.cpp#L221)
+- Lua section lookup selects the parent before the section, including sectionless
+  parents and unnamed checks. The same regression runs through both pack checkers.
+  [PopTracker 0.36.0 location lookup](https://github.com/black-sliver/PopTracker/blob/575ee4b29be8e555b7bfa4895e4206f246b399be/src/core/tracker.cpp#L619)
+- The native host suite checks integer item activation, elapsed frame seconds, and
+  long-form PackIO reads. Pseudoregalia 0.2.0 uses `*all` to load its logic data.
+  [Item activation](https://github.com/black-sliver/PopTracker/blob/575ee4b29be8e555b7bfa4895e4206f246b399be/src/core/jsonitem.cpp#L455)
+  [Frame callbacks](https://github.com/black-sliver/PopTracker/blob/575ee4b29be8e555b7bfa4895e4206f246b399be/src/core/scripthost.cpp#L517)
+  [PackIO reads](https://github.com/black-sliver/PopTracker/blob/575ee4b29be8e555b7bfa4895e4206f246b399be/src/luasandbox/luapackio.cpp#L224)
+- Universal Tracker's default entrance mode lets the APWorld choose whether to defer
+  connections. The world replays cover both an opted-in world that reconnects through
+  storage and a world that keeps its graph connected despite reporting seed pairings.
+  [Universal Tracker 0.3.3 integration guides](https://github.com/FarisTheAncient/Archipelago/releases/tag/Tracker_v0.3.3)
+
+## Relay Tower fixture
+
+Relay Tower reconstructs from slot data without player YAML. Its instance
+`interpret_slot_data` hook decodes the lift's cell requirement into a typed
+Archipelago option. The replay checks reachability with one and two cells,
+then replaces the seed options and verifies the rebuilt graph against the
+new inventory and check snapshot.
+
+```sh
+./test-world.sh tests/fixtures/relay_tower --fixture tests/scenarios/relay-tower-world.json
+```
 
 ## PopTracker packs
 

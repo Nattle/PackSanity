@@ -7,8 +7,11 @@ assert(Tracker:AddMaps("maps/yard.json"))
 assert(Tracker:AddMaps("maps/workshop.json"))
 assert(Tracker:AddLocations("locations/yard.json"))
 assert(Tracker:AddLocations("locations/workshop.json"))
+assert(Tracker:AddLocations("locations/workshop/survey.json"))
 assert(Tracker:AddClasses("layouts/classes.json"))
 assert(Tracker:AddLayouts("layouts/tracker.json"))
+assert(Tracker:AddLayouts("layouts/settings.json"))
+assert(ScriptHost:LoadScript("scripts/survey.lua"))
 
 Archipelago:AddClearHandler("station reset", function()
     local previous_bulk_update = Tracker.BulkUpdate

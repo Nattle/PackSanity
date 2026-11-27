@@ -2,6 +2,9 @@
   {
     "name": "Workshop",
     "access_rules": ["fuse"],
+    "visibility_rules": "station",
+    "chest_unopened_img": "images/station.png",
+    "chest_opened_img": "images/signal.png",
     "children": [
       {
         "name": "Console",

@@ -285,17 +285,27 @@ def item_seed_source(path: str, records: list[dict]) -> list[str]:
 def location_seed_source(path: str, records: list[dict]) -> list[str]:
     statements: list[str] = []
 
-    def visit(location: dict, parents: list[str], ordinal: int) -> None:
+    def visit(location: dict, parents: list[str], ordinal: int, parent_id: str | None = None) -> None:
         name = location.get("name") if isinstance(location.get("name"), str) else f"Location {ordinal}"
         location_path = parents + [name]
         location_id = "location/" + "/".join(slug(part) for part in location_path)
+        alias = "@" + "/".join(location_path)
+        # Register the parent before its sections, including parents with no sections.
+        arguments = [
+            lua_string(path), lua_string(location_id), "0", lua_strings([alias]), "false",
+            "{}", "nil", "false", "true", "false",
+            lua_string(parent_id) if parent_id is not None else "nil",
+        ]
+        statements.append("PackSanityStageLocation(" + ",".join(arguments) + ")")
         sections = location.get("sections") if isinstance(location.get("sections"), list) else []
         for section_index, section in enumerate(sections):
             if not isinstance(section, dict):
                 continue
-            section_name = section.get("name") if isinstance(section.get("name"), str) else f"Section {section_index}"
+            unnamed = not isinstance(section.get("name"), str)
+            section_name = f"Section {section_index}" if unnamed else section["name"]
             reference = section.get("ref") if isinstance(section.get("ref"), str) else section_name
-            aliases = ["@" + "/".join(location_path + [section_name])]
+            aliases = [alias + "/"] if unnamed else []
+            aliases.append(alias + "/" + section_name)
             if reference:
                 aliases.append(reference if reference.startswith("@") else "@" + reference)
             arguments = [
@@ -304,14 +314,13 @@ def location_seed_source(path: str, records: list[dict]) -> list[str]:
                 lua_strings(list(dict.fromkeys(aliases))),
                 "true" if json_bool(section.get("clear_as_group"), False) else "false",
                 lua_strings(codes(section.get("hosted_item"))),
+                "nil", "false", "false", "false", lua_string(location_id),
             ]
             statements.append("PackSanityStageLocation(" + ",".join(arguments) + ")")
-        # The host exposes a location-level lookup even when it has sections.
-        statements.append("PackSanityStageLocation(" + ",".join([lua_string(path), lua_string(location_id), "0", lua_strings(["@" + "/".join(location_path)]), "false", "{}"] ) + ")")
         children = location.get("children") if isinstance(location.get("children"), list) else []
         for child_index, child in enumerate(children):
             if isinstance(child, dict):
-                visit(child, location_path, child_index)
+                visit(child, location_path, child_index, location_id)
 
     for index, location in enumerate(records):
         if isinstance(location, dict):

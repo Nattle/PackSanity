@@ -98,7 +98,7 @@
           "SignalStation:0:4:entrances": ["Menu"],
           "SignalStation:0:4:events": ["Power Restored"],
           "SignalStation:0:4:map": "Workshop",
-          "SignalStation:0:4:position": {"map": "Workshop", "x": 70, "y": 20}
+          "SignalStation:0:4:position": {"map": "Workshop", "x": 70, "y": 20, "beacon": {"x": 60, "y": 46}}
         }
       },
       "expect": {
@@ -115,7 +115,8 @@
         "map": {
           "active_map_id": "Workshop",
           "player_markers": [
-            {"map_id": "Workshop", "icon_path": "signal_station/tracker/images/player.png", "x": 70, "y": 20, "size": 10}
+            {"map_id": "Workshop", "icon_path": "signal_station/tracker/images/player.png", "x": 70, "y": 20, "size": 10},
+            {"map_id": "Workshop", "icon_path": "signal_station/tracker/images/beacon.png", "x": 60, "y": 46, "size": 10}
           ],
           "maps": [
             {

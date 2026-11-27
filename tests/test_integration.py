@@ -15,6 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 SIGNAL_PACK = ROOT / 'tests/fixtures/signal-station'
 SIGNAL_WORLD = ROOT / 'tests/fixtures/signal_station'
+RELAY_TOWER_WORLD = ROOT / 'tests/fixtures/relay_tower'
 SCENARIOS = ROOT / 'tests/scenarios'
 
 
@@ -76,6 +77,11 @@ class LoadingIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_relay_tower_decodes_seed_options_without_yaml(self):
+        result = self.run_world('--fixture', str(SCENARIOS / 'relay-tower-world.json'), '--json',
+                                world=RELAY_TOWER_WORLD)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_signal_station_companion_modes_resolve_the_expected_json_source(self):
         companion = Path(self.temp.name) / 'signal-station.zip'
         with zipfile.ZipFile(companion, 'w') as archive:
@@ -91,12 +97,16 @@ class LoadingIntegrationTest(unittest.TestCase):
                     'updates': [{
                         'state': {'stored_data': {
                             'SignalStation:0:4:map': 'Workshop',
-                            'SignalStation:0:4:position': {'map': 'Workshop', 'x': 42, 'y': 31},
+                            'SignalStation:0:4:position': {
+                                'map': 'Workshop', 'x': 42, 'y': 31, 'beacon': {'x': 60, 'y': 46},
+                            },
                         }},
-                        'expect': {'map': {'player_markers': [{
-                            'map_id': 'Workshop', 'icon_path': 'external-pack/images/player.png',
-                            'x': 42, 'y': 31, 'size': 10,
-                        }]}},
+                        'expect': {'map': {'player_markers': [
+                            {'map_id': 'Workshop', 'icon_path': 'external-pack/images/player.png',
+                             'x': 42, 'y': 31, 'size': 10},
+                            {'map_id': 'Workshop', 'icon_path': 'external-pack/images/beacon.png',
+                             'x': 60, 'y': 46, 'size': 10},
+                        ]}},
                     }],
                 }))
                 result = self.run_world(
@@ -374,6 +384,37 @@ class LoadingIntegrationTest(unittest.TestCase):
         result = self.run_pack('--strict', '--fixture', str(scenario), pack=pack)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_sectionless_parents_stop_lookup_before_a_different_parent_supplies_the_check(self):
+        pack = Path(self.temp.name) / 'sectionless-parents.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"sectionless-parents"}')
+            archive.writestr('locations/atlas.json', json.dumps([
+                {'name': 'Depot'},
+                {'name': 'North', 'children': [
+                    {'name': 'Depot', 'sections': [{'name': 'Locker', 'item_count': 2}]},
+                    {'name': 'Relay'},
+                ]},
+                {'name': 'South', 'children': [
+                    {'name': 'Relay', 'sections': [{'name': 'Locker', 'item_count': 3}]},
+                    {'name': 'Terminal', 'sections': [{'item_count': 4}]},
+                ]},
+            ]))
+            archive.writestr('scripts/init.lua', """
+                assert(Tracker:AddLocations('locations/atlas.json'))
+                assert(Tracker:FindObjectForCode('@Depot'))
+                assert(Tracker:FindObjectForCode('@Depot/Locker') == nil)
+                assert(Tracker:FindObjectForCode('@Relay/Locker') == nil)
+                assert(Tracker:FindObjectForCode('@North/Depot/Locker').AvailableChestCount == 2)
+                assert(Tracker:FindObjectForCode('@South/Relay/Locker').AvailableChestCount == 3)
+                local terminal = assert(Tracker:FindObjectForCode('@South/Terminal/'))
+                Tracker:FindObjectForCode('@Terminal/').AvailableChestCount = 1
+                assert(terminal.AvailableChestCount == 1)
+            """)
+        result = self.run_pack('--strict', pack=pack)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_native_pack(pack)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_pack_module_search_order_and_load_script_contract(self):
         pack = Path(self.temp.name) / 'module-search.zip'
         with zipfile.ZipFile(pack, 'w') as archive:
@@ -539,6 +580,31 @@ class LoadingIntegrationTest(unittest.TestCase):
             ],
         }))
         result = self.run_world('--slot', '4', '--fixture', str(fixture), '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_seed_pairings_do_not_force_the_world_to_defer_connections(self):
+        fixture = Path(self.temp.name) / 'immediate-entrance.json'
+        fixture.write_text(json.dumps({
+            'slot_data': {'entrance_pairings': {'Menu': 'Hall'}, 'decoupled': True},
+            'updates': [{
+                'state': {
+                    'received_items': [{'item_id': 1001, 'location_id': -1, 'player': 1, 'flags': 1}],
+                    'missing_locations': [2001],
+                },
+                'expect': {
+                    'locations': [{
+                        'id': 2001, 'name': 'Chest', 'region': 'Hall', 'checked': False,
+                        'reachable': True, 'excluded': False,
+                    }],
+                    'required_stored_data_keys': [],
+                    'entrances': [{
+                        'id': 'Menu', 'source_region': 'Menu', 'destination_region': 'Hall',
+                        'discovered': None, 'reachable': True, 'direction': 'one_way',
+                    }],
+                },
+            }],
+        }))
+        result = self.run_world('--fixture', str(fixture), '--json')
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_tracker_replay_attaches_local_item_origin_only(self):

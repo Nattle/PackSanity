@@ -3,10 +3,44 @@ package dev.nattle.packsanity.feature.packruntime.data
 import dev.nattle.packsanity.core.logging.NoOpPopLogger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class PackSanityPackParserLayoutCompositionTest {
+    @Test
+    fun preservesCanvasPositionAndStableOrderingForOverlaidItems() {
+        val canvas =
+            dev.nattle.packsanity.core.json.PopJson.parseToJsonElement(
+                """
+                {"type":"canvas","width":192,"height":96,"content":[
+                  {"type":"item","item":"north_link","width":192,"height":96,"canvas_depth":2},
+                  {"type":"item","item":"station","width":192,"height":96},
+                  {"type":"item","item":"south_link","width":192,"height":96,"canvas_depth":2},
+                  {"type":"item","item":"relay","width":14,"height":18,"canvas_left":36,"canvas_top":22,"canvas_depth":3}
+                ]}
+                """
+                    .trimIndent()
+            )
+        val parser = PopTrackerItemGridParser(emptyMap())
+        val grid = assertNotNull(parser.parse(canvas))
+
+        assertTrue(grid.isCanvas)
+        assertEquals(192 to 96, grid.width to grid.height)
+        assertEquals(
+            listOf("station", "north_link", "south_link", "relay"),
+            grid.cells.map { it.code },
+        )
+        assertEquals(listOf(0, 2, 2, 3), grid.cells.map { it.depth })
+        assertEquals(
+            listOf(36, 22, 14, 18),
+            grid.cells.last().let { listOf(it.x, it.y, it.width, it.height) },
+        )
+        assertEquals(0 to 0, grid.frozenColumnsWidth to grid.frozenRowsHeight)
+        assertNull(parser.parse(canvas, includeCanvases = false))
+    }
+
     @Test
     fun placesInventoryBeforeSupplementalTabsAndPreservesItsRows() = runTest {
         val archive =

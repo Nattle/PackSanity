@@ -1,0 +1,52 @@
+{
+  "slot_data": {"settings": {"lift_cells": 2}},
+  "updates": [
+    {
+      "state": {
+        "received_items": [{"item_id": 921001, "location_id": 921101, "player": 1, "flags": 1}],
+        "checked_locations": [921101],
+        "missing_locations": [921102, 921103]
+      },
+      "expect": {
+        "regions": [{"name": "Menu", "reachable": true}, {"name": "Tower", "reachable": false}],
+        "inventory": [{"id": 921001, "name": "Charged Cell", "count": 1}, {"id": 921002, "name": "Wrench", "count": 0}]
+      }
+    },
+    {
+      "state": {
+        "received_items": [
+          {"item_id": 921001, "location_id": 921101, "player": 1, "flags": 1},
+          {"item_id": 921001, "location_id": 921102, "player": 1, "flags": 1}
+        ],
+        "checked_locations": [921101, 921102],
+        "missing_locations": [921103]
+      },
+      "expect": {
+        "regions": [{"name": "Menu", "reachable": true}, {"name": "Tower", "reachable": true}],
+        "inventory": [{"id": 921001, "name": "Charged Cell", "count": 2}, {"id": 921002, "name": "Wrench", "count": 0}]
+      }
+    },
+    {
+      "state": {
+        "slot_data": {"settings": {"lift_cells": 1}},
+        "received_items": [{"item_id": 921001, "location_id": 921101, "player": 1, "flags": 1}],
+        "checked_locations": [921101],
+        "missing_locations": [921102, 921103]
+      },
+      "expect": {
+        "locations": [
+          {"id": 921101, "name": "Supply Bin", "region": "Menu", "checked": true, "reachable": true, "excluded": false},
+          {"id": 921102, "name": "Tool Rack", "region": "Menu", "checked": false, "reachable": true, "excluded": false},
+          {"id": 921103, "name": "Relay Cabinet", "region": "Tower", "checked": false, "reachable": true, "excluded": false}
+        ],
+        "inventory": [{"id": 921001, "name": "Charged Cell", "count": 1}, {"id": 921002, "name": "Wrench", "count": 0}]
+      }
+    }
+  ],
+  "expect": {
+    "metadata": {"package_root": "relay_tower", "games": ["Relay Tower"], "requires_yaml_by_game": {"Relay Tower": false}},
+    "locations": 3,
+    "regions": 2,
+    "updates": 3
+  }
+}

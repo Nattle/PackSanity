@@ -1,0 +1,7 @@
+{
+  "settings_popup": {
+    "type": "group",
+    "header": "Map Options",
+    "content": {"type": "item", "item": "survey_pins"}
+  }
+}

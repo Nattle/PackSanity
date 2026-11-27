@@ -1,6 +1,8 @@
 package dev.nattle.packsanity.feature.packruntime.data
 
 import dev.nattle.packsanity.core.logging.NoOpPopLogger
+import dev.nattle.packsanity.feature.packruntime.domain.rules.MarkerState
+import dev.nattle.packsanity.feature.packruntime.domain.rules.RuleEvaluator
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -53,16 +55,35 @@ class PackSanityPackParserLocationReferencesTest {
                         "manifest.json" to
                             """{"name":"Test","game_name":"Test","package_uid":"test"}""",
                         "locations/areas.json" to
-                            """[{"name":"Overworld","sections":[{"name":"Start"}]}]""",
+                            """[{"name":"Overworld","access_rules":"rope","visibility_rules":"map","sections":[{"name":"Start"}]}]""",
                         "locations/cave.json" to
-                            """[{"name":"Cave","parent":"Overworld","sections":[{"name":"Chest"}]}]""",
+                            """[{"name":"Cave","parent":"Overworld","access_rules":"boots","children":[{"name":"Tunnel","sections":[{"name":"Chest","access_rules":"lantern"}]}]}]""",
                     )
             )
 
         val loaded = PackSanityPackParser(logger = NoOpPopLogger).load(archive).getOrThrow()
 
         assertEquals(listOf("Overworld"), loaded.locations.map { it.name })
-        assertEquals(listOf("Cave"), loaded.locations.single().children.map { it.name })
+        val cave = loaded.locations.single().children.single()
+        assertEquals("Cave", cave.name)
+        val chest = cave.children.single().sections.single()
+        val evaluator = RuleEvaluator()
+        assertEquals(
+            MarkerState.Unavailable,
+            evaluator.evaluate(chest.accessRules, setOf("boots", "lantern")),
+        )
+        assertEquals(
+            MarkerState.Accessible,
+            evaluator.evaluate(chest.accessRules, setOf("rope", "boots", "lantern")),
+        )
+        assertEquals(
+            MarkerState.Unavailable,
+            evaluator.evaluate(chest.visibilityRules, emptySet<String>()),
+        )
+        assertEquals(
+            MarkerState.Accessible,
+            evaluator.evaluate(chest.visibilityRules, setOf("map")),
+        )
     }
 
     @Test

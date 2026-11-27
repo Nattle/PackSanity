@@ -8,7 +8,8 @@
   },
   {
     "name": "Battery Cell", "type": "consumable", "codes": "cell", "img": "images/station.png",
-    "min_quantity": 0, "max_quantity": 9, "increment": 1, "decrement": 1, "initial_quantity": 0
+    "min_quantity": 0, "max_quantity": 9, "increment": 1, "decrement": 1, "initial_quantity": 0,
+    "overlay_background": "#203030", "overlay_font_size": 12, "overlay_align": "right"
   },
   {
     "name": "Receiver", "type": "progressive", "allow_disabled": true, "loop": false,
@@ -37,5 +38,9 @@
   {
     "name": "Calibrated Receiver", "type": "toggle_badged", "codes": "calibrated",
     "base_item": "receiver", "img": "images/player.png"
+  },
+  {
+    "name": "Survey Pins", "type": "toggle", "codes": "survey_pins",
+    "img": "images/player.png", "disabled_img": "images/station.png", "initial_active_state": true
   }
 ]

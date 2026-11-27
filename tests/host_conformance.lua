@@ -8,8 +8,33 @@ assert(file:read('*l') == 'PackSanity')
 assert(io.open('../outside.txt', 'r') == nil)
 assert(io.open('data/value.txt', 'w') == nil)
 
+do
+    -- Pseudoregalia uses the upstream long-form PackIO reads for its rule data.
+    PackSanityRegisterPackFile('data/readings.txt', 'first\r\n27 tail')
+    local readings = assert(io.open('data/readings.txt'))
+    assert(readings:read('*line') == 'first')
+    assert(readings:read('*number') == 27)
+    local position = readings:seek()
+    assert(readings:read('*all') == ' tail' and readings:seek() == position)
+    assert(readings:read('*a') == ' tail' and readings:read('*all') == '')
+    readings:seek('set')
+    local lines = readings:lines('*line')
+    assert(lines() == 'first' and lines() == '27 tail' and lines() == nil)
+end
+
 PackSanitySeedItem('sword', 'toggle', 1, false, true, 0, 0, 0, 1, 1, '', {'sword'}, {}, false, nil, nil, nil)
 assert(Tracker:FindObjectForCode('sword').Name == 'sword')
+do
+    -- The upstream JsonItem setter treats only integer values as signed flags.
+    local sword = Tracker:FindObjectForCode('sword')
+    for _, sample in ipairs({{0, false}, {-1, false}, {2, true}, {0.0, true}, {'', true}}) do
+        sword.Active = sample[1]
+        assert(sword.Active == sample[2])
+        assert(Tracker:ProviderCountForCode('sword') == (sample[2] and 1 or 0))
+    end
+    sword.Active = nil
+    assert(not sword.Active)
+end
 PackSanitySeedItem('case-sensitive-source', 'static', 1, false, false, 0, 0, 0, 1, 1, '', {'lower_case'}, {}, false, nil, nil, nil)
 assert(Tracker:FindObjectForCode('LOWER_CASE').Name == 'case-sensitive-source')
 assert(Tracker:ProviderCountForCode('LOWER_CASE') == 1)
@@ -32,6 +57,28 @@ custom:Set('amount', 1)
 assert(code_changes == 1)
 assert(PackSanityDrainCallbackErrors() == '')
 
+do
+    local survey = ScriptHost:CreateLuaItem()
+    survey.Name = 'Survey\30Receiver'
+    survey.Icon = ImageReference:FromPackRelativePath('icons/receiver.png')
+    survey.PotentialCodes = {'receiver'}
+    survey.ProvidesCodeFunc = function(item) return item:Get('active') and 2 or 0 end
+    Archipelago:AddRetrievedHandler('survey', function(_, value) survey:Set('active', value) end)
+    Archipelago:AddClearHandler('survey', function() survey:Set('active', false) end)
+
+    assert(Tracker:ProviderCountForCode('receiver') == 0)
+    PackSanityDispatchRetrieved('survey', true)
+    -- A provider registered after creation must work before an object lookup warms any index.
+    assert(Tracker:ProviderCountForCode('receiver') == 2)
+    assert(PackSanityHostedItems('receiver') ==
+        table.concat({'receiver', 'Survey Receiver', 'icons/receiver.png', '', '', '2'}, '\30'))
+    survey.PotentialCodes = {'receiver_online'}
+    assert(Tracker:ProviderCountForCode('receiver') == 0)
+    assert(Tracker:ProviderCountForCode('receiver_online') == 2)
+    PackSanityDispatchClear({})
+    assert(Tracker:ProviderCountForCode('receiver_online') == 0)
+end
+
 function ConformanceFailingRule() error('conformance rule failure') end
 assert(PackSanityEvaluateRule('ConformanceFailingRule') == 0)
 local rule_field_separator = string.char(28)
@@ -42,13 +89,17 @@ function ConformanceTrueRule() return true end
 local true_rule = 'lua' .. rule_field_separator .. 'true-rule' .. rule_field_separator .. 'ConformanceTrueRule'
 assert(PackSanityRuleValues(true_rule) == 'true-rule' .. rule_field_separator .. '1')
 
-local watched, framed, location_changed = 0, 0, 0
+local watched, elapsed_frames, location_changed = 0, {}, 0
 assert(ScriptHost:AddWatchForCode('conformance-watch', 'sword', function() watched = watched + 1 end))
-assert(ScriptHost:AddOnFrameHandler('conformance-frame', function() framed = framed + 1 end))
+assert(ScriptHost:AddOnFrameHandler('conformance-frame', function(elapsed)
+    elapsed_frames[#elapsed_frames + 1] = elapsed
+end))
 assert(PackSanityChangeItemState('sword', 'primary'))
 assert(watched >= 1)
 PackSanityRunFrame()
-assert(framed == 1)
+PackSanityRunFrame(1.25)
+assert(#elapsed_frames == 2 and elapsed_frames[1] == 0 and elapsed_frames[2] == 1.25)
+assert(ScriptHost:RemoveOnFrameHandler('conformance-frame'))
 
 PackSanitySeedLocation('@test/location', 1, {}, false, {}, AccessibilityLevel.Normal)
 assert(ScriptHost:AddOnLocationSectionChangedHandler('conformance-location', function() location_changed = location_changed + 1 end))
@@ -90,3 +141,27 @@ PackSanityDispatchLocation(large_location_id, 'Check')
 PackSanityDispatchLocation(large_location_id, 'Check')
 assert(#Archipelago.MissingLocations == 0 and #Archipelago.CheckedLocations == 1)
 assert(Archipelago.CheckedLocations[1] == large_location_id)
+
+do
+    -- Portrait of Ruin checks the AP connection through AutoTracker's method form.
+    assert(AutoTracker:GetConnectionState('AP') == 0)
+    assert(not Archipelago:HintItem('offline'))
+    Archipelago.__connected = true
+    assert(AutoTracker:GetConnectionState('AP') == 3)
+    assert(AutoTracker.GetConnectionState('AP') == 3)
+    assert(AutoTracker:GetConnectionState('SNES') == 0)
+    assert(not Archipelago:HintLocation({}))
+    assert(Archipelago:HintLocation('Café🚀' .. string.char(30, 31, 0)))
+    assert(Archipelago:HintItem(902))
+    assert(PackSanityDrainArchipelagoCommands() == table.concat({
+        'hint_location\30' .. '436166c3a9f09f9a801e1f00', 'hint_item\30' .. '393032',
+    }, '\31'))
+    assert(Archipelago:HintItem('discard'))
+    Archipelago:Get('keep')
+    Archipelago.__connected = false
+    PackSanityDiscardHintCommands()
+    assert(AutoTracker:GetConnectionState('AP') == 0)
+    assert(PackSanityDrainArchipelagoCommands() == 'get\30keep')
+end
+
+assert(PackSanityDrainCallbackErrors() == '')

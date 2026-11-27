@@ -7,7 +7,7 @@
   "platform": "pc",
   "platform_override": "pc",
   "versions_url": "https://example.invalid/signal-station/versions.json",
-  "min_poptracker_version": "0.34.1",
+  "min_poptracker_version": "0.35.4",
   "target_poptracker_version": "0.36.0",
   "min_packsanity_version": "0.1.0",
   "target_packsanity_version": "0.1.0",

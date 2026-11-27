@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Survey Terminal",
+    "parent": "Workshop",
+    "chest_unopened_img": "images/station.png",
+    "map_locations": [
+      {
+        "map": "Workshop", "x": 62, "y": 47, "size": 9, "shape": "diamond", "border_thickness": 1,
+        "restrict_visibility_rules": ["survey_pins"],
+        "force_invisibility_rules": ["calibrated"]
+      }
+    ],
+    "sections": [
+      {
+        "item_count": 2,
+        "clear_as_group": true,
+        "hosted_item": "survey_scanned, survey_link",
+        "chest_opened_img": "images/player.png",
+        "access_rules": [
+          ["^$StationSurvey|low,high", "cell:2", "[receiver_tuned]"],
+          "{@Yard/Loading Bay/Crate}"
+        ]
+      }
+    ]
+  }
+]

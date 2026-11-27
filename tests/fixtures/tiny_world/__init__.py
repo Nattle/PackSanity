@@ -42,7 +42,12 @@ class FixtureWorld(World):
 
     def connect_entrances(self):
         slot_data = getattr(self.multiworld, "re_gen_passthrough", {}).get(self.game, {})
-        if slot_data.get("deferred_discovery") and self.multiworld.enforce_deferred_connections == "default":
+        self.entrance_pairings = slot_data.get("entrance_pairings")
+        deferred_mode = self.multiworld.enforce_deferred_connections
+        opted_in = deferred_mode == "on" or (
+            deferred_mode == "default" and slot_data.get("deferred_discovery")
+        )
+        if opted_in:
             self.gateway_destination = self.gateway.connected_region
             self.gateway_destination.entrances.remove(self.gateway)
             self.gateway.connected_region = None

@@ -37,7 +37,7 @@ internal fun List<TrackerLocation>.applyDeclaredParents(
                 "" to location
             } else {
                 val (path, parent) = match
-                val child = location.copy(parentId = parent.id)
+                val child = location.inheritRulesFrom(parent).copy(parentId = parent.id)
                 attachedChildren.getOrPut(parent.id, ::mutableListOf) += child
                 "$path/" to child
             }
@@ -49,6 +49,23 @@ internal fun List<TrackerLocation>.applyDeclaredParents(
             children = (location.children + attachedChildren[location.id].orEmpty()).map(::attach)
         )
     return roots.map(::attach)
+}
+
+private fun TrackerLocation.inheritRulesFrom(parent: TrackerLocation): TrackerLocation {
+    if (parent.accessRules.isEmpty() && parent.visibilityRules.isEmpty()) return this
+    // The subtree already carries its nested rules. Apply the registered parent's rules once.
+    return copy(
+        accessRules = mergeRules(parent.accessRules, accessRules),
+        visibilityRules = mergeRules(parent.visibilityRules, visibilityRules),
+        sections =
+            sections.map { section ->
+                section.copy(
+                    accessRules = mergeRules(parent.accessRules, section.accessRules),
+                    visibilityRules = mergeRules(parent.visibilityRules, section.visibilityRules),
+                )
+            },
+        children = children.map { it.inheritRulesFrom(parent) },
+    )
 }
 
 /** PopTracker section-match order shared by the model and Lua registration seeds. */

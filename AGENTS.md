@@ -1,6 +1,8 @@
 # PackSanity agent guide
 
 Read README.md, docs/testing.md and docs/compatibility-matrix.md before changing loading behavior.
+Keep README.md in sync with changes to supported behavior, developer commands, and test fixtures.
+Update the relevant sections in the same change.
 This repo owns the portable loading/runtime layer. App UI, network clients, catalogs,
 platform preferences and application MVI belong outside it. Do not add sibling-checkout paths,
 application UI dependencies or game-specific loader switches. Synthetic game names belong only
@@ -34,3 +36,9 @@ when it provides clearer coverage.
 For APWorlds, use seed-shaped slot data/YAML where reconstruction requires it. A package listing
 or a successful import alone does not prove reconstruction, maps or state replay.
 Keep native calls and world sessions serialized; a world switch needs a new interpreter/process.
+
+## Pull requests
+
+- List the features changed in every PR description.
+- Include a Mermaid diagram with high-level boxes when it helps explain what was added.
+- Include steps to reproduce the original bug when applicable.

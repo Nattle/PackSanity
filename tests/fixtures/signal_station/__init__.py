@@ -21,10 +21,16 @@ def map_page_index(data: str) -> int:
     return MAPS.index(data) if data in MAPS else 0
 
 
-def location_icon_coords(index: int | None, data: dict | None) -> tuple[int, int, str] | None:
-    if index is not None and isinstance(data, dict) and data.get("map") == MAPS[index]:
-        return data["x"], data["y"], "images/player.png"
-    return None
+def location_icon_coords(
+    index: int | None, data: dict | None,
+) -> list[tuple[int, int, str]] | None:
+    if index is None or not isinstance(data, dict) or data.get("map") != MAPS[index]:
+        return None
+    markers = [(data["x"], data["y"], "images/player.png")]
+    if "beacon" in data:
+        beacon = data["beacon"]
+        markers.append((beacon["x"], beacon["y"], "images/beacon.png"))
+    return markers
 
 
 class SignalStationItem(Item):

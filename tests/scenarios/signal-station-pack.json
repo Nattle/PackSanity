@@ -10,13 +10,17 @@
     {"type": "item", "index": 4, "item": 920003, "name": "Battery Cell", "player": 5},
     {"type": "location", "location": 920102, "name": "Control Panel"},
     {"type": "retrieved", "key": "SignalStation:4:calibrated", "value": false},
-    {"type": "set_reply", "key": "SignalStation:4:calibrated", "value": true, "old_value": false}
+    {"type": "set_reply", "key": "SignalStation:4:calibrated", "value": true, "old_value": false},
+    {"type": "scout", "location": 920101, "location_name": "Supply Crate", "item": 920002, "item_name": "Receiver", "player": 4},
+    {"type": "bounced", "packet": {"cmd": "Bounced", "tags": ["SignalStationSurvey"], "data": {"slot": 4, "online": true}}},
+    {"type": "bounced", "packet": {"cmd": "Bounced", "tags": ["SignalStationSurvey"], "data": {"slot": 6, "online": false}}},
+    {"type": "bounced", "packet": {"cmd": "Bounced", "tags": ["Other"], "data": {"slot": 4, "online": false}}}
   ],
   "expect": {
     "game": "Signal Station",
-    "items": 7,
+    "items": 8,
     "maps": 2,
-    "sections": 6,
+    "sections": 7,
     "diagnostics": [
       "Loaded 3 Archipelago item mappings.",
       "Loaded 3 Archipelago location mappings."
@@ -27,8 +31,10 @@
       "maps/workshop.json",
       "locations/yard.json",
       "locations/workshop.json",
+      "locations/workshop/survey.json",
       "layouts/classes.json",
-      "layouts/tracker.json"
+      "layouts/tracker.json",
+      "layouts/settings.json"
     ],
     "mappedLocations": {
       "920101": [
@@ -42,7 +48,8 @@
       ]
     },
     "highlights": {
-      "workshop/power/power-restored": 3
+      "workshop/power/power-restored": 3,
+      "survey-terminal/section-0": 3
     },
     "providerCounts": {
       "station": 1,
@@ -53,7 +60,10 @@
       "transmitter": 1,
       "transmitter_live": 1,
       "circuit": 2,
-      "calibrated": 1
+      "calibrated": 1,
+      "survey_pins": 1,
+      "survey_scanned": 1,
+      "survey_link": 1
     },
     "unresolvedReferences": [],
     "missingImages": []
