@@ -198,8 +198,12 @@ private fun StringBuilder.appendLocationTree(
             append(',').append(section.clearAsGroup).append(',')
             appendLuaStrings(section.hostedItems)
             append(",nil,false,false,false,").append(location.id.toLuaSeedLiteral())
-            if (hasDeclaredParent)
+            if (hasDeclaredParent) {
                 append(",false,parent_id ~= nil,").append(section.name.toLuaSeedLiteral())
+                if (location.sections.size == 1) {
+                    append(',').append(location.name.toLuaSeedLiteral())
+                }
+            }
             append(")\n")
         }
     }

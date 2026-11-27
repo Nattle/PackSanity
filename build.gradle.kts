@@ -9,7 +9,7 @@ plugins {
 
 allprojects {
     group = "dev.nattle.packsanity"
-    version = providers.gradleProperty("releaseVersion").orElse("0.1.3-SNAPSHOT").get()
+    version = providers.gradleProperty("releaseVersion").orElse("0.1.4-SNAPSHOT").get()
 }
 
 spotless {

@@ -17,7 +17,7 @@ and [0.6.8 network protocol](https://github.com/ArchipelagoMW/Archipelago/blob/5
 | `Tracker:AddItems/Maps/Locations/Layouts/Classes` | The loader resolves paths for the active variant and retains registration order. Successful item registrations create separate providers with distinct model IDs. A missing path, malformed JSON, or wrong top-level JSON type returns `false` and does not become a registration. Declared location parents resolve against locations registered by earlier calls. |
 | Tracker objects, providers, rules, code/frame/location handlers | PopTracker 0.36 compatibility surface with bounded refreshes, live provider counts, hosted items, and canonical region access. JSON item codes are case-insensitive. Lua sees the pack's original section path in `FullID`, and state snapshots use stable model IDs. |
 | Pack `io` | Read-only access to registered in-memory files. |
-| Archipelago callbacks | The host dispatches callbacks and queues outgoing commands. Checks and status updates require `apmanual`. Scouts accept `apmanual` or `aphintgame`. The caller handles networking. |
+| Archipelago callbacks | The host dispatches callbacks and queues outgoing commands. The Kotlin loader and native checker apply the selected variant's flags before running `scripts/init.lua`. Checks and status updates require `apmanual`. Scouts accept `apmanual` or `aphintgame`. The caller handles networking. |
 | `ScriptHost:RunScriptAsync`, `RunStringAsync` | Run synchronously. |
 | `AutoTracker` memory reads and watches | Reads return `0`. Watch registration returns `false`. |
 | `ScriptHost` memory and variable watches | Watch registration returns `false`. |
@@ -30,6 +30,9 @@ host adapter functions. In addition to standard PopTracker metadata, manifests c
 `min_packsanity_version`, `target_packsanity_version`,
 `min_packsanity_compatibility_level`, and `target_packsanity_compatibility_level`.
 Consumers supply any override archives.
+
+PackSanity supports references to a location's only section by the location's full path
+or leaf name, including after a Lua registration attaches the location to an earlier parent.
 
 ## APWorlds
 

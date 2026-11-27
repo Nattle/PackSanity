@@ -43,6 +43,14 @@ class LoadingIntegrationTest(unittest.TestCase):
         return subprocess.run([str(self.cli), str(pack or ROOT/'tests/fixtures/callback-pack'), *options],
                               env=self.env, text=True,capture_output=True,timeout=60)
 
+    def run_native_pack(self, pack, *options):
+        native_dir = Path(self.env['PACKSANITY_NATIVE_DIR'])
+        return subprocess.run([
+            sys.executable, str(ROOT / 'tools/test_pack.py'), str(pack),
+            '--host', str(native_dir / 'packsanity-lua'), '--bootstrap', str(native_dir / 'host.lua'),
+            *options,
+        ], capture_output=True, text=True, timeout=60)
+
     def run_world(self, *options, world=None):
         return subprocess.run([str(self.python), '-I', '-S',
                                str(ROOT/'tools/test_world.py'), str(world or self.world), *options],
@@ -181,9 +189,12 @@ class LoadingIntegrationTest(unittest.TestCase):
             archive.writestr('locations/child.json',
                              '[{"name":"Child","parent":"Unused","sections":[{"name":"Chest"}]}]')
             archive.writestr('locations/late-child.json',
-                             '[{"name":"Annex","parent":"Room","sections":[{"name":"Check"}]}]')
+                             '[{"name":"Annex","parent":"Room","sections":[{"name":"Check"}]},'
+                             '{"name":"Hall","parent":"Room","sections":[{"name":"Left"},{"name":"Right"}]}]')
             archive.writestr('locations/ref.json',
-                             '[{"name":"Mirror","sections":[{"name":"Alias","ref":"Room/Annex/Check"}]}]')
+                             '[{"name":"Mirror","sections":[{"name":"Alias","ref":"Room/Hall/Right"}]},'
+                             '{"name":"Shorthand","sections":[{"name":"Alias","ref":"Room/Annex"}]},'
+                             '{"name":"Leaf","sections":[{"name":"Alias","ref":"Annex"}]}]')
             archive.writestr('layouts/fallback.json', '{}')
             archive.writestr('scripts/init.lua', """
                 assert(not Tracker:AddLayouts({'layouts/missing.json', 'layouts/fallback.json'}))
@@ -198,8 +209,12 @@ class LoadingIntegrationTest(unittest.TestCase):
                     assert(Tracker:AddLocations({'locations/late-child.json', 'locations/ref.json'}))
                     local check = assert(Tracker:FindObjectForCode('@Room/Annex/Check'))
                     assert(check.FullID == 'Room/Annex/Check')
-                    assert(Tracker:FindObjectForCode('@Mirror/Check') == check)
-                    check.Highlight = 2
+                    local right = assert(Tracker:FindObjectForCode('@Room/Hall/Right'))
+                    assert(Tracker:FindObjectForCode('@Mirror/Right') == right)
+                    assert(Tracker:FindObjectForCode('@Shorthand/Check') == check)
+                    local leaf = assert(Tracker:FindObjectForCode('@Leaf/Alias'))
+                    assert(leaf == check)
+                    leaf.Highlight = 2
                 end)
             """)
         scenario = pack.with_suffix('.json')
@@ -213,6 +228,35 @@ class LoadingIntegrationTest(unittest.TestCase):
         self.assertEqual(["Could not resolve location parent 'Unused' for 'Child'"], variant['diagnostics'])
         self.assertIn('layouts/fallback.json', variant['registeredFiles'])
         self.assertNotIn('layouts/missing.json', variant['registeredFiles'])
+
+    def test_active_variant_controls_archipelago_commands_in_both_checkers(self):
+        pack = Path(self.temp.name) / 'archipelago-capabilities.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', json.dumps({
+                'package_uid': 'archipelago-capabilities',
+                'variants': {
+                    'standard': {'flags': ['ap']},
+                    'hint': {'flags': ['ap', 'aphintgame']},
+                    'manual': {'flags': ['apmanual']},
+                },
+            }))
+            for variant in ('standard', 'hint', 'manual'):
+                archive.writestr(f'{variant}/expected.txt', variant)
+            archive.writestr('scripts/init.lua', """
+                local variant = assert(io.open('expected.txt')):read('*a')
+                assert(Tracker.ActiveVariantUID == variant)
+                local manual = variant == 'manual'
+                local scout = manual or variant == 'hint'
+                assert(Archipelago:StatusUpdate(Archipelago.ClientStatus.READY) == manual)
+                assert(Archipelago:LocationChecks({1}) == manual)
+                assert(Archipelago:LocationScouts({2}, true) == scout)
+            """)
+        result = self.run_pack('--all-variants', '--strict', pack=pack)
+        self.assertEqual(0, result.returncode, result.stderr)
+        for variant in ('standard', 'hint', 'manual'):
+            with self.subTest(variant=variant):
+                result = self.run_native_pack(pack, '--variant', variant)
+                self.assertEqual(0, result.returncode, result.stderr)
 
     def test_failed_optional_layout_does_not_fail_strict_mode(self):
         pack = Path(self.temp.name) / 'layout-fallback.zip'

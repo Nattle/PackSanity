@@ -343,7 +343,8 @@ def seed_source(files: dict[str, bytes]) -> str:
     return "\n".join(statements) + "\n"
 
 
-def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int) -> list[str]:
+def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int,
+        variant: str, flags: list[str]) -> list[str]:
     if "scripts/init.lua" not in files:
         raise PackError("pack does not contain scripts/init.lua for the selected variant")
     with tempfile.TemporaryDirectory(prefix="packsanity-pack-") as temp:
@@ -371,6 +372,13 @@ def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int) 
                 destination = root / path
                 for name in module_names(path):
                     command.extend(["--lazy-module", f"{name}={destination}"])
+        variant_setup = root / "packsanity_variant.lua"
+        variant_setup.write_text(
+            f"Tracker.ActiveVariantUID = {lua_string(variant)}\n"
+            f"PackSanitySetArchipelagoFlags({lua_strings(flags)})\n",
+            encoding="utf-8",
+        )
+        command.extend(["--execute", str(variant_setup)])
         command.extend(["--execute", str(root / "scripts/init.lua")])
         completed = subprocess.run(command, capture_output=True, text=True)
         if completed.returncode:
@@ -399,10 +407,14 @@ def main() -> int:
         files, source = read_archive(options.source)
         root_files = resolve_root(files)
         variant, selected, manifest = select_variant(root_files, options.variant)
+        metadata = (manifest.get("variants") or {}).get(variant, {})
+        flags = metadata.get("flags", []) if isinstance(metadata, dict) else None
+        if not isinstance(flags, list) or any(not isinstance(flag, str) for flag in flags):
+            raise PackError(f"variant {variant!r} flags must be an array of strings")
         if options.pack_io_limit <= 0:
             raise PackError("--pack-io-limit must be positive")
         warnings = api_warnings(selected)
-        warnings.extend(run(selected, host, options.bootstrap, options.pack_io_limit))
+        warnings.extend(run(selected, host, options.bootstrap, options.pack_io_limit, variant, flags))
         report = {"status": "boot_passed", "source": source, "package_uid": manifest["package_uid"], "variant": variant, "warnings": warnings}
         print(json.dumps(report, sort_keys=True) if options.json else f"PASS {manifest['package_uid']} (variant: {variant})")
         for warning in warnings:

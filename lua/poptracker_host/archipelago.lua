@@ -6,6 +6,12 @@ __connected = false, __allows_location_checks = false, __allows_location_scouts 
 __player_aliases = {}, __player_games = {},
 __item_names = {}, __location_names = {},
 }
+function PackSanitySetArchipelagoFlags(flags)
+local manual = list_contains_identity(flags, 'apmanual')
+Archipelago.__allows_location_checks = manual
+Archipelago.__allows_location_scouts = manual or list_contains_identity(flags, 'aphintgame')
+end
+
 function Archipelago:GetPlayerAlias(number)
 return self.__player_aliases[number] or tostring(number)
 end

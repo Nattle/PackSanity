@@ -176,12 +176,18 @@ return #left < #right
 end
 
 local function reference_path(path)
-return path:lower():gsub('^%s*', ''):gsub('%s*$', ''):gsub('^@?/*', ''):gsub('/+$', '')
+return (path:lower():gsub('^%s*', ''):gsub('%s*$', ''):gsub('^@?/*', ''):gsub('/+$', ''))
 end
 
 local function section_match(path, target)
 if path == target then return 1 end
 if path:sub(-(#target + 1)) == '/'..target then return 2 end
+end
+
+local function relocated_section_match(paths, target)
+local match = section_match(paths[1], target)
+if match then return match end
+if paths[2] == target or paths[3] == target then return 2 end
 end
 
 local function resolve_section_reference(reference)
@@ -206,9 +212,10 @@ for rank, group in ipairs({ reference.exact, reference.suffix, reference.normali
     end
 end
 for _, object in ipairs(relocated_sections) do
-    local path = reference_path(object.__packsanity_named_path)
-    local match = section_match(path, target)
-    if not match and section_match(path:gsub(',', ''), normalized_target) then match = 3 end
+    local match = relocated_section_match(object.__packsanity_reference_paths, target)
+    if not match and relocated_section_match(object.__packsanity_normalized_paths, normalized_target) then
+        match = 3
+    end
     consider(object, match)
 end
 return exact or suffix or (not ambiguous_normalized and normalized) or reference.fallback
@@ -262,12 +269,13 @@ if key == nil then return nil end
 return registered_section(key) or find_location_reference(key) or tracker_objects[key]
 end
 
-function PackSanitySeedLocation(full_id, chest_count, aliases, clear_as_group, hosted_codes, accessibility_level, is_placeholder, is_parent, detached, parent_id, relocated, relocated_section, section_name)
+function PackSanitySeedLocation(full_id, chest_count, aliases, clear_as_group, hosted_codes, accessibility_level, is_placeholder, is_parent, detached, parent_id, relocated, relocated_section, section_name, single_section_location)
 if is_parent and not is_placeholder then
     location_registration_order = location_registration_order + 1
-    local location = { id = full_id, parent = parent_id, order = location_registration_order, relocated = relocated == true }
-    registered_locations[full_id] = location
     local path = aliases and aliases[1] and aliases[1]:sub(2)
+    local location = { id = full_id, parent = parent_id, order = location_registration_order,
+        relocated = relocated == true, path = path }
+    registered_locations[full_id] = location
     if path and not locations_by_path[path] then
         locations_by_path[path] = location
         table.insert(registered_location_paths, path)
@@ -338,8 +346,17 @@ object.__packsanity_is_accessibility_pack_owned = function() return accessibilit
 object.Owner = object
 if relocated_section then
     object.__packsanity_relocated = true
-    object.__packsanity_named_path = aliases[#aliases]
     object.__packsanity_section_name = section_name
+    local paths = { reference_path(aliases[#aliases]) }
+    -- PackSanity also accepts the location name or full location path for a lone section.
+    if single_section_location then
+        paths[2] = reference_path(registered_locations[parent_id].path)
+        paths[3] = reference_path(single_section_location)
+    end
+    local normalized = {}
+    for index, path in ipairs(paths) do normalized[index] = path:gsub(',', '') end
+    object.__packsanity_reference_paths = paths
+    object.__packsanity_normalized_paths = normalized
     table.insert(relocated_sections, object)
 end
 if not detached then tracker_objects[full_id] = object end
