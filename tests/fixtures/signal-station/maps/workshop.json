@@ -1,0 +1,6 @@
+[
+  {
+    "name": "Workshop", "img": "images/workshop.png", "location_size": 10,
+    "location_border_thickness": 2, "location_shape": "rect"
+  }
+]

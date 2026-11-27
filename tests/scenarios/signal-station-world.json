@@ -1,0 +1,168 @@
+{
+  "updates": [
+    {
+      "state": {
+        "received_items": [],
+        "checked_locations": [],
+        "missing_locations": [920101, 920102, 920103],
+        "stored_data": {"SignalStation:0:4:entrances": []}
+      },
+      "expect": {
+        "locations": [
+          {"id": 920101, "name": "Supply Crate", "region": "Menu", "checked": false, "reachable": true, "excluded": false},
+          {"id": 920102, "name": "Control Panel", "region": "Workshop", "checked": false, "reachable": false, "excluded": false},
+          {"id": 920103, "name": "Spare Parts", "region": "Workshop", "checked": false, "reachable": false, "excluded": true}
+        ],
+        "entrances": [
+          {"id": "Menu", "source_region": "Menu", "destination_region": "Workshop", "discovered": false, "reachable": null, "direction": "one_way"}
+        ],
+        "map": {"active_map_id": "Yard", "player_markers": []}
+      }
+    },
+    {
+      "state": {
+        "received_items": [{"item_id": 920001, "location_id": 920101, "player": 4, "flags": 1}],
+        "checked_locations": [920101],
+        "missing_locations": [920102, 920103],
+        "stored_data": {
+          "SignalStation:0:4:entrances": [],
+          "SignalStation:0:4:map": "Workshop",
+          "SignalStation:0:4:position": {"map": "Yard", "x": 30, "y": 35}
+        }
+      },
+      "expect": {
+        "regions": [{"name": "Menu", "reachable": true}, {"name": "Workshop", "reachable": false}],
+        "inventory": [
+          {"id": 920003, "name": "Battery Cell", "count": 0},
+          {"id": 920001, "name": "Fuse", "count": 1},
+          {"id": 920002, "name": "Receiver", "count": 0}
+        ],
+        "map": {"active_map_id": "Workshop", "player_markers": []}
+      }
+    },
+    {
+      "state": {
+        "received_items": [{"item_id": 920001, "location_id": 920101, "player": 4, "flags": 1}],
+        "checked_locations": [920101],
+        "missing_locations": [920102, 920103],
+        "stored_data": {
+          "SignalStation:0:4:entrances": ["Menu"],
+          "SignalStation:0:4:map": "Workshop",
+          "SignalStation:0:4:position": {"map": "Workshop", "x": 42, "y": 31}
+        }
+      },
+      "expect": {
+        "locations": [
+          {"id": 920101, "name": "Supply Crate", "region": "Menu", "checked": true, "reachable": true, "excluded": false},
+          {"id": 920102, "name": "Control Panel", "region": "Workshop", "checked": false, "reachable": false, "excluded": false},
+          {"id": 920103, "name": "Spare Parts", "region": "Workshop", "checked": false, "reachable": true, "excluded": true}
+        ],
+        "entrances": [
+          {"id": "Menu", "source_region": "Menu", "destination_region": "Workshop", "discovered": true, "reachable": true, "direction": "one_way"}
+        ],
+        "map": {
+          "active_map_id": "Workshop",
+          "player_markers": [
+            {"map_id": "Workshop", "icon_path": "signal_station/tracker/images/player.png", "x": 42, "y": 31, "size": 10}
+          ]
+        }
+      }
+    },
+    {
+      "state": {
+        "received_items": [{"item_id": 920001, "location_id": 920101, "player": 4, "flags": 1}],
+        "checked_locations": [920101],
+        "missing_locations": [920102, 920103],
+        "stored_data": {
+          "SignalStation:0:4:entrances": ["Menu"],
+          "SignalStation:0:4:events": ["Power Restored"],
+          "SignalStation:0:4:map": "Workshop",
+          "SignalStation:0:4:position": {"map": "Workshop", "x": 49, "y": 35}
+        }
+      },
+      "expect": {
+        "locations": [
+          {"id": 920101, "name": "Supply Crate", "region": "Menu", "checked": true, "reachable": true, "excluded": false},
+          {"id": 920102, "name": "Control Panel", "region": "Workshop", "checked": false, "reachable": true, "excluded": false},
+          {"id": 920103, "name": "Spare Parts", "region": "Workshop", "checked": false, "reachable": true, "excluded": true}
+        ]
+      }
+    },
+    {
+      "state": {
+        "slot_data": {"door_requires_fuse": false, "entrance_links": {"Menu": "Workshop"}, "decoupled": true},
+        "received_items": [{"item_id": 920002, "location_id": 920102, "player": 4, "flags": 0}],
+        "checked_locations": [920101, 920102],
+        "missing_locations": [920103],
+        "stored_data": {
+          "SignalStation:0:4:entrances": ["Menu"],
+          "SignalStation:0:4:events": ["Power Restored"],
+          "SignalStation:0:4:map": "Workshop",
+          "SignalStation:0:4:position": {"map": "Workshop", "x": 70, "y": 20}
+        }
+      },
+      "expect": {
+        "locations": [
+          {"id": 920101, "name": "Supply Crate", "region": "Menu", "checked": true, "reachable": true, "excluded": false},
+          {"id": 920102, "name": "Control Panel", "region": "Workshop", "checked": true, "reachable": true, "excluded": false},
+          {"id": 920103, "name": "Spare Parts", "region": "Workshop", "checked": false, "reachable": true, "excluded": true}
+        ],
+        "inventory": [
+          {"id": 920003, "name": "Battery Cell", "count": 0},
+          {"id": 920001, "name": "Fuse", "count": 0},
+          {"id": 920002, "name": "Receiver", "count": 1}
+        ],
+        "map": {
+          "active_map_id": "Workshop",
+          "player_markers": [
+            {"map_id": "Workshop", "icon_path": "signal_station/tracker/images/player.png", "x": 70, "y": 20, "size": 10}
+          ],
+          "maps": [
+            {
+              "id": "Yard",
+              "image_path": "signal_station/tracker/images/yard.png",
+              "locations": [{"location_id": 920101, "x": 20, "y": 24, "size": 8}],
+              "location_icon_size": 12,
+              "location_size": 12,
+              "location_border_thickness": 1,
+              "graph_markers": [
+                {"x": 76, "y": 32, "kind": "entrance", "entries": [
+                  {"id": "Workshop Door", "name": "Service Door", "status": "complete"}
+                ]}
+              ]
+            },
+            {
+              "id": "Workshop",
+              "image_path": "signal_station/tracker/images/workshop.png",
+              "locations": [{"location_id": 920102, "x": 72, "y": 18}, {"location_id": 920103, "x": 32, "y": 44}],
+              "location_icon_size": 10,
+              "location_size": 10,
+              "location_border_thickness": 2,
+              "graph_markers": [
+                {"x": 52, "y": 34, "kind": "event", "entries": [
+                  {"id": "Power Restored", "name": "Power Restored", "status": "complete"}
+                ]}
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expect": {
+    "metadata": {"package_root": "signal_station", "games": ["Signal Station"], "requires_yaml_by_game": {"Signal Station": true}},
+    "locations": 3,
+    "regions": 2,
+    "inventory": 3,
+    "maps": 2,
+    "updates": 5,
+    "state": {
+      "slot": 4,
+      "slot_name": "StationTester",
+      "external_map_pack_missing": false,
+      "required_stored_data_keys": [
+        "SignalStation:0:4:entrances", "SignalStation:0:4:events", "SignalStation:0:4:map", "SignalStation:0:4:position"
+      ]
+    }
+  }
+}

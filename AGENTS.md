@@ -27,6 +27,10 @@ Validate changes with `./gradlew spotlessApply :loader:jvmTest`, `make test`, an
 `python3.13 -m unittest discover -s python/src/test/python`, and
 `python3.13 tests/test_integration.py`. Run Gradle builds sequentially. Validate runtime changes
 with a relevant real archive when available, plus a scenario that actually tests affected behavior.
+Whenever testing a real pack or APWorld reveals a feature that exercises a previously untested
+path, add a regression test that exercises the feature and verifies its behavior. Prefer extending
+the core test suites or shared scenarios under active development. Use a dedicated feature test
+when it provides clearer coverage.
 For APWorlds, use seed-shaped slot data/YAML where reconstruction requires it. A package listing
 or a successful import alone does not prove reconstruction, maps or state replay.
 Keep native calls and world sessions serialized; a world switch needs a new interpreter/process.

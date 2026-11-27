@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Workshop",
+    "access_rules": ["fuse"],
+    "children": [
+      {
+        "name": "Console",
+        "sections": [{"name": "Control Panel", "item_count": 1, "access_rules": ["transmitter_live"]}],
+        "map_locations": [{"map": "Workshop", "x": 72, "y": 18}]
+      },
+      {
+        "name": "Storage",
+        "sections": [{"name": "Spare Parts", "item_count": 1, "visibility_rules": ["station"]}],
+        "map_locations": [{"map": "Yard", "x": 60, "y": 42}, {"map": "Workshop", "x": 32, "y": 44}]
+      },
+      {
+        "name": "Power",
+        "sections": [{"name": "Power Restored", "hosted_item": "transmitter"}],
+        "map_locations": [{"map": "Yard", "x": 44, "y": 44}, {"map": "Workshop", "x": 52, "y": 34}]
+      }
+    ]
+  },
+  {
+    "name": "Summary",
+    "sections": [{"name": "Panel", "ref": "Workshop/Console/Control Panel"}]
+  }
+]

@@ -1,0 +1,5 @@
+{
+  "door_requires_fuse": true,
+  "entrance_links": {"Menu": "Workshop"},
+  "decoupled": true
+}

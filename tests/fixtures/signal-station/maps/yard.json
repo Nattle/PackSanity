@@ -1,0 +1,6 @@
+[
+  {
+    "name": "Yard", "img": "images/yard.png", "location_size": 12,
+    "location_border_thickness": 1, "location_shape": "diamond"
+  }
+]

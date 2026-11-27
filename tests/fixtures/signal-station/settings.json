@@ -1,0 +1,6 @@
+{
+  "smooth_scaling": true,
+  "smooth_map_scaling": false,
+  "allow_deferred_logic_update": true,
+  "disabled_image_filter": "dim"
+}

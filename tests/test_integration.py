@@ -13,6 +13,9 @@ import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+SIGNAL_PACK = ROOT / 'tests/fixtures/signal-station'
+SIGNAL_WORLD = ROOT / 'tests/fixtures/signal_station'
+SCENARIOS = ROOT / 'tests/scenarios'
 
 
 class LoadingIntegrationTest(unittest.TestCase):
@@ -55,6 +58,58 @@ class LoadingIntegrationTest(unittest.TestCase):
         return subprocess.run([str(self.python), '-I', '-S',
                                str(ROOT/'tools/test_world.py'), str(world or self.world), *options],
                               env=self.env, text=True,capture_output=True,timeout=60)
+
+    def test_signal_station_pack_replays_both_variants(self):
+        result = self.run_pack('--all-variants', '--fixture', str(SCENARIOS / 'signal-station-pack.json'),
+                               '--json', pack=SIGNAL_PACK)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([variant['variant'] for variant in json.loads(result.stdout)['variants']],
+                         ['standard', 'compact'])
+
+    def test_signal_station_world_reconstructs_and_replays_state(self):
+        result = self.run_world(
+            '--slot', '4', '--slot-name', 'StationTester',
+            '--yaml', str(SCENARIOS / 'signal-station-player.yaml'),
+            '--slot-data', str(SCENARIOS / 'signal-station-slot-data.json'),
+            '--fixture', str(SCENARIOS / 'signal-station-world.json'), '--json',
+            world=SIGNAL_WORLD,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_signal_station_companion_modes_resolve_the_expected_json_source(self):
+        companion = Path(self.temp.name) / 'signal-station.zip'
+        with zipfile.ZipFile(companion, 'w') as archive:
+            for file in sorted(SIGNAL_PACK.rglob('*')):
+                if file.is_file():
+                    archive.write(file, file.relative_to(SIGNAL_PACK).as_posix())
+        seed_data = json.loads((SCENARIOS / 'signal-station-slot-data.json').read_text())
+        for source, crate_x in (('external', 18), ('hybrid', 20)):
+            with self.subTest(source=source):
+                fixture = Path(self.temp.name) / f'signal-station-{source}.json'
+                fixture.write_text(json.dumps({
+                    'slot_data': dict(seed_data, map_source=source),
+                    'updates': [{
+                        'state': {'stored_data': {
+                            'SignalStation:0:4:map': 'Workshop',
+                            'SignalStation:0:4:position': {'map': 'Workshop', 'x': 42, 'y': 31},
+                        }},
+                        'expect': {'map': {'player_markers': [{
+                            'map_id': 'Workshop', 'icon_path': 'external-pack/images/player.png',
+                            'x': 42, 'y': 31, 'size': 10,
+                        }]}},
+                    }],
+                }))
+                result = self.run_world(
+                    '--slot', '4', '--slot-name', 'StationTester',
+                    '--yaml', str(SCENARIOS / 'signal-station-player.yaml'),
+                    '--external-pack', str(companion), '--fixture', str(fixture), '--json',
+                    world=SIGNAL_WORLD,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                yard, workshop = json.loads(result.stdout)['state']['map']['maps']
+                self.assertEqual(yard['image_path'], 'external-pack/images/yard.png')
+                self.assertEqual(workshop['image_path'], 'external-pack/images/workshop.png')
+                self.assertEqual(yard['locations'], [{'location_id': 920101, 'x': crate_x, 'y': 24, 'size': 8}])
 
     def test_computed_registration_native_callbacks_and_hint_mapping(self):
         result = self.run_pack('--all-variants','--fixture',str(ROOT/'tests/scenarios/example-pack.json'),'--json')

@@ -1,0 +1,21 @@
+{
+  "tracker_default": {
+    "type": "array",
+    "orientation": "vertical",
+    "content": [
+      {"type": "layout", "key": "equipment_grid"},
+      {
+        "type": "tabbed",
+        "tabs": [
+          {"title": "Yard", "content": {"type": "map", "maps": ["Yard"]}},
+          {"title": "Workshop", "content": {"type": "map", "maps": ["Workshop"]}}
+        ]
+      }
+    ]
+  },
+  "equipment_grid": {
+    "type": "itemgrid",
+    "class": "equipment",
+    "rows": [["station", "fuse", "circuit", "cell"], ["receiver", "transmitter", "calibrated"]]
+  }
+}

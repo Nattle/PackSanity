@@ -4,6 +4,36 @@ Run the commands from any working directory with paths relative to that director
 Use `--json` for machine-readable stdout. Failures return a nonzero exit code and a
 message on stderr.
 
+## Signal Station fixtures
+
+The original Signal Station fixtures share a game name, item IDs, check IDs, and map
+assets. Run the pack through both variants and the APWorld through the five-snapshot
+replay used by the integration suite.
+
+```sh
+./test-pack.sh tests/fixtures/signal-station --all-variants \
+  --fixture tests/scenarios/signal-station-pack.json
+
+./test-world.sh tests/fixtures/signal_station --slot 4 --slot-name StationTester \
+  --yaml tests/scenarios/signal-station-player.yaml \
+  --slot-data tests/scenarios/signal-station-slot-data.json \
+  --fixture tests/scenarios/signal-station-world.json
+```
+
+| Configuration | Fixture coverage |
+| --- | --- |
+| PopTracker | Manifest and variant metadata, settings, all seven JSON item types, maps, nested sections, references, class and layout registration, and Archipelago item, check, and storage callbacks. The pack scenario expects the two mapping diagnostics emitted by the parser as well as empty missing-image and unresolved-reference lists. |
+| Universal Tracker | Internal, external, and hybrid map loading, check and entrance aliases, map-specific visibility, automatic map selection, player coordinates, deferred entrance and event markers, and slot-data reconstruction. The fixture declares both desktop navigation options in their respective modes. PackSanity exercises the map state while map navigation rendering belongs to the desktop client. |
+| Archipelago | APWorld source metadata, inherited common YAML options, a game-specific toggle, item and location tables, regions, entrances, an event, and seed-shaped slot data. The replay verifies YAML exclusion groups, server check membership, inventory, and reachability before and after reconstruction. |
+
+For companion testing, ZIP the contents of `tests/fixtures/signal-station` at the
+archive root and pass the ZIP to `--external-pack`. Add `"map_source": "external"`
+or `"map_source": "hybrid"` to a copy of the slot data and run the world checker with
+that copy and the player YAML. The integration suite verifies that the crate pin
+comes from the companion JSON in external mode and from the APWorld JSON in hybrid mode.
+
+[Upstream interfaces and the headless compatibility scope](compatibility-matrix.md)
+
 ## PopTracker packs
 
 ```sh

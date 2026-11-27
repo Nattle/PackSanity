@@ -1,0 +1,41 @@
+[
+  {
+    "name": "Station", "type": "static", "codes": "station", "img": "images/station.png"
+  },
+  {
+    "name": "Fuse", "type": "toggle", "codes": "fuse", "img": "images/signal.png",
+    "disabled_img_mods": "@disabled"
+  },
+  {
+    "name": "Battery Cell", "type": "consumable", "codes": "cell", "img": "images/station.png",
+    "min_quantity": 0, "max_quantity": 9, "increment": 1, "decrement": 1, "initial_quantity": 0
+  },
+  {
+    "name": "Receiver", "type": "progressive", "allow_disabled": true, "loop": false,
+    "stages": [
+      {"codes": "receiver", "img": "images/signal.png"},
+      {"codes": "receiver_tuned", "img": "images/signal.png", "inherit_codes": true, "img_mods": "brightness|1.3"}
+    ]
+  },
+  {
+    "name": "Transmitter", "type": "progressive_toggle", "initial_active_state": false,
+    "stages": [
+      {"codes": "transmitter", "img": "images/station.png"},
+      {"codes": "transmitter_live", "img": "images/signal.png", "inherit_codes": true}
+    ]
+  },
+  {
+    "name": "Circuit", "type": "composite_toggle", "codes": "circuit",
+    "item_left": "transmitter", "item_right": "fuse",
+    "images": [
+      {"left": false, "right": false, "img": "images/station.png", "img_mods": "@disabled"},
+      {"left": true, "right": false, "img": "images/station.png"},
+      {"left": false, "right": true, "img": "images/signal.png", "img_mods": "@disabled"},
+      {"left": true, "right": true, "img": "images/signal.png"}
+    ]
+  },
+  {
+    "name": "Calibrated Receiver", "type": "toggle_badged", "codes": "calibrated",
+    "base_item": "receiver", "img": "images/player.png"
+  }
+]

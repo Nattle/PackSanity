@@ -1,0 +1,20 @@
+{
+  "name": "Signal Station Tracker",
+  "game_name": "Signal Station",
+  "package_uid": "packsanity-signal-station",
+  "package_version": "1.0.0",
+  "author": "PackSanity contributors",
+  "platform": "pc",
+  "platform_override": "pc",
+  "versions_url": "https://example.invalid/signal-station/versions.json",
+  "min_poptracker_version": "0.34.1",
+  "target_poptracker_version": "0.36.0",
+  "min_packsanity_version": "0.1.0",
+  "target_packsanity_version": "0.1.0",
+  "min_packsanity_compatibility_level": 1,
+  "target_packsanity_compatibility_level": 1,
+  "variants": {
+    "standard": {"display_name": "Standard", "flags": ["ap", "apmanual"]},
+    "compact": {"display_name": "Compact", "flags": ["ap", "aphintgame"]}
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "events": [
+    {"type": "connected", "player": 4, "team": 0, "seed": "signal-station", "missing_locations": [920101, 920102, 920103]},
+    {"type": "item", "index": 0, "item": 920003, "name": "Battery Cell", "player": 4},
+    {"type": "clear", "slot_data": {"door_requires_fuse": true}},
+    {"type": "item", "index": 0, "item": 920001, "name": "Fuse", "player": 4},
+    {"type": "item", "index": 1, "item": 920002, "name": "Receiver", "player": 5},
+    {"type": "item", "index": 2, "item": 920002, "name": "Receiver", "player": 6},
+    {"type": "item", "index": 3, "item": 920003, "name": "Battery Cell", "player": 4},
+    {"type": "item", "index": 4, "item": 920003, "name": "Battery Cell", "player": 5},
+    {"type": "location", "location": 920102, "name": "Control Panel"},
+    {"type": "retrieved", "key": "SignalStation:4:calibrated", "value": false},
+    {"type": "set_reply", "key": "SignalStation:4:calibrated", "value": true, "old_value": false}
+  ],
+  "expect": {
+    "game": "Signal Station",
+    "items": 7,
+    "maps": 2,
+    "sections": 6,
+    "diagnostics": [
+      "Loaded 3 Archipelago item mappings.",
+      "Loaded 3 Archipelago location mappings."
+    ],
+    "registeredFiles": [
+      "items/equipment.json",
+      "maps/yard.json",
+      "maps/workshop.json",
+      "locations/yard.json",
+      "locations/workshop.json",
+      "layouts/classes.json",
+      "layouts/tracker.json"
+    ],
+    "mappedLocations": {
+      "920101": [
+        "yard/loading-bay/crate"
+      ],
+      "920102": [
+        "workshop/console/control-panel"
+      ],
+      "920103": [
+        "workshop/storage/spare-parts"
+      ]
+    },
+    "highlights": {
+      "workshop/power/power-restored": 3
+    },
+    "providerCounts": {
+      "station": 1,
+      "fuse": 1,
+      "cell": 2,
+      "receiver": 1,
+      "receiver_tuned": 1,
+      "transmitter": 1,
+      "transmitter_live": 1,
+      "circuit": 2,
+      "calibrated": 1
+    },
+    "unresolvedReferences": [],
+    "missingImages": []
+  }
+}

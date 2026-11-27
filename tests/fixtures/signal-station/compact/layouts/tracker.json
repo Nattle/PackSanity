@@ -1,0 +1,14 @@
+{
+  "tracker_default": {
+    "type": "array",
+    "orientation": "vertical",
+    "content": [
+      {
+        "type": "itemgrid",
+        "class": "equipment",
+        "rows": [["station", "fuse", "circuit", "cell", "receiver", "transmitter", "calibrated"]]
+      },
+      {"type": "map", "maps": ["Yard", "Workshop"]}
+    ]
+  }
+}

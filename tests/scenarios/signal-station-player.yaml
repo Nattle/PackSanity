@@ -1,0 +1,15 @@
+name: StationTester
+game: Signal Station
+Signal Station:
+  progression_balancing: 35
+  accessibility: minimal
+  local_items: [Fuse]
+  non_local_items: [Receiver]
+  start_inventory: {}
+  start_hints: [Receiver]
+  start_location_hints: [Control Panel]
+  exclude_locations: [Optional checks]
+  priority_locations: [Supply Crate]
+  item_links: []
+  plando_items: []
+  emergency_power: true

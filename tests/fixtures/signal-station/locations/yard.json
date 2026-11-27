@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Yard",
+    "children": [
+      {
+        "name": "Loading Bay",
+        "sections": [{"name": "Crate", "item_count": 1}],
+        "map_locations": [{"map": "Yard", "x": 18, "y": 24, "size": 8}]
+      },
+      {
+        "name": "Access",
+        "sections": [{"name": "Service Door", "access_rules": ["fuse"]}],
+        "map_locations": [
+          {"map": "Yard", "x": 76, "y": 32},
+          {"map": "Workshop", "x": 16, "y": 34}
+        ]
+      }
+    ]
+  }
+]
