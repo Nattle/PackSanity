@@ -1,11 +1,69 @@
 package dev.nattle.packsanity.feature.packruntime.data
 
+import dev.nattle.packsanity.core.json.PackJson
 import dev.nattle.packsanity.feature.packruntime.data.schema.RawItem
 import dev.nattle.packsanity.feature.packruntime.data.schema.RawItemStage
 import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerItem
 import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerItemKind
 import dev.nattle.packsanity.feature.packruntime.domain.model.TrackerItemStage
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
+
+private val ITEM_TEXT_FIELDS =
+    setOf(
+        "name",
+        "type",
+        "img",
+        "img_mods",
+        "disabled_img",
+        "disabled_img_mods",
+        "overlay_background",
+        "overlay_align",
+        "base_item",
+        "item_left",
+        "item_right",
+    )
+private val ITEM_PRIMITIVE_FIELDS = setOf("max_quantity", "overlay_font_size", "badge_font_size")
+
+// See docs/compatibility-matrix.md#poptracker for item array and field handling.
+internal fun JsonArray.decodePackItems(onNonObject: (Int) -> Unit): List<RawItem> =
+    mapIndexedNotNull { index, record ->
+        val item = record as? JsonObject
+        if (item == null) {
+            onNonObject(index)
+            null
+        } else {
+            PackJson.decodeFromJsonElement<RawItem>(item.withItemFieldDefaults())
+        }
+    }
+
+private fun JsonObject.withItemFieldDefaults(): JsonObject =
+    JsonObject(
+        buildMap {
+            for ((key, value) in this@withItemFieldDefaults) {
+                when (key) {
+                    in ITEM_TEXT_FIELDS ->
+                        if (value is JsonPrimitive && value.isString) put(key, value)
+                    in ITEM_PRIMITIVE_FIELDS -> if (value is JsonPrimitive) put(key, value)
+                    "stages",
+                    "images" ->
+                        if (value is JsonArray) {
+                            put(
+                                key,
+                                JsonArray(
+                                    value.filterIsInstance<JsonObject>().map {
+                                        it.withItemFieldDefaults()
+                                    }
+                                ),
+                            )
+                        }
+                    else -> put(key, value)
+                }
+            }
+        }
+    )
 
 internal fun List<TrackerItem>.repeatedItemIdPrefix(): String =
     generateSequence("packsanity-item/") { "$it/" }

@@ -14,6 +14,8 @@ import sys
 import tempfile
 import zipfile
 
+ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 MAX_ENTRIES = 8192
@@ -155,22 +157,16 @@ def select_variant(files: dict[str, bytes], requested: str | None) -> tuple[str,
                 overlay[remaining] = contents
         else:
             selected[path] = contents
+    variant_modules = {path.translate(ASCII_LOWER) for path in overlay if path.lower().endswith(".lua")}
+    selected = {path: contents for path, contents in selected.items()
+                if path.translate(ASCII_LOWER) not in variant_modules}
     return active, selected | overlay, manifest
-
-
-def module_names(path: str) -> list[str]:
-    canonical = path[:-4]
-    names = {canonical, canonical.replace("/", ".")}
-    if canonical.startswith("scripts/"):
-        short = canonical.removeprefix("scripts/")
-        names.update({short, short.replace("/", ".")})
-    return sorted(names)
 
 
 def api_warnings(files: dict[str, bytes]) -> list[str]:
     warnings = set()
     for path, contents in files.items():
-        if not path.endswith(".lua"):
+        if not path.lower().endswith(".lua"):
             continue
         text = contents.decode("utf-8", errors="replace")
         for api in UNAVAILABLE_APIS:
@@ -239,12 +235,11 @@ def slug(value: str) -> str:
     return re.sub(r"(^-+|-+$)", "", re.sub(r"[^a-z0-9]+", "-", value.lower())) or "unnamed"
 
 
-def read_json_records(contents: bytes) -> list[dict]:
+def read_json(contents: bytes) -> object:
     try:
-        decoded = json.loads(remove_jsonc(contents.decode("utf-8-sig")))
+        return json.loads(remove_jsonc(contents.decode("utf-8-sig")))
     except (UnicodeDecodeError, json.JSONDecodeError, PackError):
-        return []
-    return decoded if isinstance(decoded, list) else []
+        return None
 
 
 def item_seed_source(path: str, records: list[dict]) -> list[str]:
@@ -330,11 +325,22 @@ def location_seed_source(path: str, records: list[dict]) -> list[str]:
 
 def seed_source(files: dict[str, bytes]) -> str:
     statements = []
+    shapes = {}
+    exact = {}
+    folded = {}
     for path, contents in sorted(files.items()):
+        exact[path] = "true"
+        folded.setdefault(path.translate(ASCII_LOWER), lua_string(path))
         start = contents.removeprefix(b"\xef\xbb\xbf").lstrip()[:1]
-        if start not in (b"[", b"/"):
+        if start not in (b"[", b"{", b"/"):
             continue
-        records = [record for record in read_json_records(contents) if isinstance(record, dict)]
+        document = read_json(contents)
+        if isinstance(document, dict):
+            shapes[path] = "false"
+        if not isinstance(document, list):
+            continue
+        shapes[path] = "true"
+        records = [record for record in document if isinstance(record, dict)]
         folder = path.split("/", 1)[0].lower()
         if any(
             record.keys() & {"codes", "stages", "item_left", "item_right", "max_quantity"}
@@ -349,46 +355,50 @@ def seed_source(files: dict[str, bytes]) -> str:
             for record in records
         ):
             statements.extend(location_seed_source(path, records))
-    return "\n".join(statements) + "\n"
+    layers = "{{" + lua_table(exact) + "," + lua_table(folded) + "}}"
+    setup = f"PackSanitySetDefinitionPaths('', {layers}, {lua_table(shapes)})"
+    return "\n".join([setup, *statements]) + "\n"
+
+
+def lua_table(entries: dict[str, str]) -> str:
+    return "{" + ",".join(f"[{lua_string(key)}]={value}" for key, value in entries.items()) + "}"
 
 
 def run(files: dict[str, bytes], host: str, bootstrap: str, pack_io_limit: int,
         variant: str, flags: list[str]) -> list[str]:
-    if "scripts/init.lua" not in files:
+    if not any(path.translate(ASCII_LOWER) == "scripts/init.lua" for path in files):
         raise PackError("pack does not contain scripts/init.lua for the selected variant")
     with tempfile.TemporaryDirectory(prefix="packsanity-pack-") as temp:
         root = Path(temp)
         total = 0
         skipped = []
+        module_paths = []
         command = [host, "--bootstrap", bootstrap]
         for path, contents in sorted(files.items()):
             extension = path.rsplit(".", 1)[-1].lower() if "." in path else ""
             if extension in OMITTED_EXTENSIONS:
                 continue
-            if not path.endswith(".lua") and total + len(contents) > pack_io_limit:
+            if extension != "lua" and total + len(contents) > pack_io_limit:
                 skipped.append(path)
                 continue
             total += len(contents)
-            destination = root / path
+            destination = root / "pack" / path
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(contents)
             command.extend(["--pack-file", f"{path}={destination}"])
+            if extension == "lua":
+                module_paths.append(path)
         staging = root / "packsanity_seed.lua"
         staging.write_text(seed_source(files), encoding="utf-8")
         command.extend(["--execute", str(staging)])
-        for path in sorted(files):
-            if path.endswith(".lua") and path != "scripts/init.lua":
-                destination = root / path
-                for name in module_names(path):
-                    command.extend(["--lazy-module", f"{name}={destination}"])
-        variant_setup = root / "packsanity_variant.lua"
-        variant_setup.write_text(
-            f"Tracker.ActiveVariantUID = {lua_string(variant)}\n"
-            f"PackSanitySetArchipelagoFlags({lua_strings(flags)})\n",
-            encoding="utf-8",
-        )
-        command.extend(["--execute", str(variant_setup)])
-        command.extend(["--execute", str(root / "scripts/init.lua")])
+        startup = root / "packsanity_startup.lua"
+        startup.write_text("\n".join([
+            f"Tracker.ActiveVariantUID = {lua_string(variant)}",
+            f"PackSanitySetArchipelagoFlags({lua_strings(flags)})",
+            *(f"PackSanityRegisterPackModule({lua_string(path)})" for path in module_paths),
+            "assert(ScriptHost:LoadScript('scripts/init.lua'), __packsanity_last_load_error)",
+        ]), encoding="utf-8")
+        command.extend(["--execute", str(startup)])
         completed = subprocess.run(command, capture_output=True, text=True)
         if completed.returncode:
             stderr = completed.stderr.strip().splitlines()

@@ -37,7 +37,7 @@ data class RawItem(
     @SerialName("overlay_font_size") val overlayFontSize: JsonPrimitive? = null,
     @SerialName("badge_font_size") val badgeFontSize: JsonPrimitive? = null,
     @SerialName("overlay_align") val overlayAlign: String? = null,
-    val loop: Boolean = false,
+    @Serializable(with = LenientBooleanFalseSerializer::class) val loop: Boolean = false,
     @SerialName("base_item") val baseItem: String? = null,
     @SerialName("item_left") val itemLeft: String? = null,
     @SerialName("item_right") val itemRight: String? = null,

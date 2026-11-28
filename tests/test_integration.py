@@ -61,7 +61,7 @@ class LoadingIntegrationTest(unittest.TestCase):
                               env=self.env, text=True,capture_output=True,timeout=60)
 
     def test_signal_station_pack_replays_both_variants(self):
-        result = self.run_pack('--all-variants', '--fixture', str(SCENARIOS / 'signal-station-pack.json'),
+        result = self.run_pack('--all-variants', '--strict', '--fixture', str(SCENARIOS / 'signal-station-pack.json'),
                                '--json', pack=SIGNAL_PACK)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([variant['variant'] for variant in json.loads(result.stdout)['variants']],
@@ -418,12 +418,21 @@ class LoadingIntegrationTest(unittest.TestCase):
     def test_pack_module_search_order_and_load_script_contract(self):
         pack = Path(self.temp.name) / 'module-search.zip'
         with zipfile.ZipFile(pack, 'w') as archive:
-            archive.writestr('manifest.json', '{"package_uid":"module-search"}')
+            archive.writestr('manifest.json', '{"package_uid":"module-search","variants":{"standard":{}}}')
             archive.writestr('scripts/group/module/init.lua', 'return {...}')
             archive.writestr('group/module.lua', 'error("root module shadows scripts init")')
             archive.writestr('fallback/module/init.lua', 'return 42')
             archive.writestr('scripts/prefer.lua', 'return "scripts file"')
             archive.writestr('scripts/prefer/init.lua', 'error("init shadows file")')
+            archive.writestr('scripts/dotted.name.lua', 'error("literal filename shadows nested module")')
+            archive.writestr('scripts/dotted/name.lua', 'return 123')
+            archive.writestr('scripts/literal.only.lua', 'return 0')
+            archive.writestr('scripts/unused.lua', 'invalid Lua !')
+            archive.writestr('scripts/Étage.LuA', 'return 456')
+            archive.writestr('scripts/Ünit.lua', 'return "base Unicode spelling"')
+            archive.writestr('standard/scripts/ünit.lua', 'return "variant Unicode spelling"')
+            archive.writestr('scripts/flavor.lua', 'error("base module shadows variant")')
+            archive.writestr('standard/scripts/Flavor.LUA', 'return "variant"')
             archive.writestr('scripts/effect.lua', 'calls = (calls or 0) + 1; return false')
             archive.writestr('scripts/init.lua', """
                 local module = require('group.module')
@@ -433,6 +442,14 @@ class LoadingIntegrationTest(unittest.TestCase):
                 assert(require('scripts/group/module/init')[1] == 'scripts/group/module/init')
                 assert(require('fallback.module') == 42)
                 assert(require('prefer') == 'scripts file')
+                assert(require('dotted.name') == 123)
+                assert(not pcall(require, 'literal.only'))
+                assert(require('Étage') == 456)
+                assert(require('ÉTAGE') == 456)
+                assert(not pcall(require, 'étage'))
+                assert(require('Ünit') == 'base Unicode spelling')
+                assert(require('ünit') == 'variant Unicode spelling')
+                assert(require('flavor') == 'variant')
                 assert(require('effect') == false)
                 assert(require('effect') == false)
                 assert(calls == 1)
@@ -444,6 +461,39 @@ class LoadingIntegrationTest(unittest.TestCase):
             """)
         result = self.run_pack('--strict', pack=pack)
         self.assertEqual(0, result.returncode, result.stderr)
+        native = self.run_native_pack(pack)
+        self.assertEqual(0, native.returncode, native.stderr)
+
+    def test_item_registration_skips_non_objects_and_defaults_invalid_fields(self):
+        pack = Path(self.temp.name) / 'mixed-items.zip'
+        with zipfile.ZipFile(pack, 'w') as archive:
+            archive.writestr('manifest.json', '{"package_uid":"mixed-items"}')
+            archive.writestr('items/mixed.json', json.dumps([
+                42,
+                {'type': 'static', 'codes': 'first'},
+                {'type': 'static', 'codes': 'second', 'img': {}, 'loop': {}, 'stages': False},
+            ]))
+            archive.writestr('items/object.json', '{}')
+            archive.writestr('items/broken.json', '[{"type":"static"}')
+            archive.writestr('scripts/init.lua', """
+                assert(not Tracker:AddItems('items/missing.json'))
+                assert(not Tracker:AddItems('items/object.json'))
+                assert(not Tracker:AddItems('items/broken.json'))
+                assert(Tracker:AddItems('items/mixed.json'))
+                assert(Tracker:ProviderCountForCode('first') == 1)
+                assert(Tracker:ProviderCountForCode('second') == 1)
+            """)
+        result = self.run_pack('--json', pack=pack)
+        self.assertEqual(0, result.returncode, result.stderr)
+        variant = json.loads(result.stdout)['variants'][0]
+        self.assertEqual(2, variant['items'])
+        self.assertEqual(['items/mixed.json'], variant['registeredFiles'])
+        self.assertEqual(['Skipped non-object item at index 0 in items/mixed.json'], variant['diagnostics'])
+        strict = self.run_pack('--strict', pack=pack)
+        self.assertNotEqual(0, strict.returncode)
+        self.assertIn('Skipped non-object item', strict.stderr)
+        native = self.run_native_pack(pack)
+        self.assertEqual(0, native.returncode, native.stderr)
 
     def test_registration_matches_exact_archive_and_explicit_variant_paths(self):
         pack = Path(self.temp.name) / 'archive-registration-paths.zip'

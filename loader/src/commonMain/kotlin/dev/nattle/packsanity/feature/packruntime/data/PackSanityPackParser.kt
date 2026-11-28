@@ -137,7 +137,12 @@ class PackSanityPackParser(
             val raw =
                 archive
                     .readJson(path, itemVariant, diagnostics) {
-                        PackJson.decodeFromString<List<RawItem>>(it)
+                        val array =
+                            PackJson.parseToJsonElement(it) as? JsonArray
+                                ?: error("Expected an array of items")
+                        array.decodePackItems { index ->
+                            diagnostics += "Skipped non-object item at index $index in $path"
+                        }
                     }
                     .orEmpty()
             val startIndex = definitions?.itemOffsets?.get(path) ?: nextItemIndex
@@ -162,13 +167,12 @@ class PackSanityPackParser(
         val items =
             if (preserveDuplicateItems || definitions != null) parsedItems
             else parsedItems.associateBy { it.id }.values.toList()
-        val archipelagoItemCodesById = archive.readItemMappings(variantUid, diagnostics, logger)
+        val archipelagoItemCodesById = archive.readItemMappings(variantUid, logger)
 
         val locationMappings =
             archive.readLocationMappings(
                 variantUid = variantUid,
                 variantUids = manifest.variants.keys,
-                diagnostics = diagnostics,
                 logger = logger,
             )
         val locationIds = PackLocationIdAllocator(definitions?.locationIds.orEmpty())
@@ -348,7 +352,7 @@ class PackSanityPackParser(
                 is JsonObject -> jsonShapes[path] = false
                 else -> continue
             }
-            if (json !is JsonArray || json.isEmpty() || json.any { it !is JsonObject }) continue
+            if (json !is JsonArray || json.isEmpty()) continue
             val array = json
             val requested = explicit[path].orEmpty()
 
@@ -358,8 +362,7 @@ class PackSanityPackParser(
                 path.substringAfterActiveVariant(variantUid).substringBefore('/').lowercase()
             val itemFolder = folder == "items" || folder == "items.json"
             val locationFolder = folder == "locations" || folder == "locations.json"
-            for (record in array) {
-                val node = record as JsonObject
+            for (node in array.filterIsInstance<JsonObject>()) {
                 val named = (node["name"] as? JsonPrimitive)?.isString == true
                 val type = (node["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
                 val itemFields = node.keys.any(ITEM_FIELDS::contains)
@@ -379,8 +382,7 @@ class PackSanityPackParser(
                 if (itemDefinitions && locationDefinitions) break
             }
             if (itemDefinitions) {
-                runCatching { PackJson.decodeFromJsonElement<List<RawItem>>(array) }
-                    .onSuccess { items[path] = it }
+                items[path] = array.decodePackItems {}
             }
             if (locationDefinitions) {
                 runCatching { PackJson.decodeFromJsonElement<List<RawLocation>>(array) }

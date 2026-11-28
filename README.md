@@ -40,9 +40,9 @@ Once the required tools are installed, the bundled smoke test can be your first 
 
 Use a ZIP or an unpacked directory. Pass `--variant UID` in place of `--all-variants` to check one variant.
 
-- Reads `manifest.json`, runs Lua initialization, and parses the items, maps, locations, and layouts registered by the selected variant.
+- Reads `manifest.json`, runs Lua initialization, and parses the items, maps, locations, and layouts registered by the selected variant. [Module lookup and item registration rules](docs/compatibility-matrix.md#poptracker)
 - Runs frame handlers, reports callback errors, and checks that active highlights point to registered locations or sections.
-- With `--strict`, fails on parser diagnostics, unresolved section references, or missing map images.
+- With `--strict`, fails on parser diagnostics, unresolved section references, or missing map images. Successful Archipelago mapping loads are logged at info level.
 - With `--fixture`, replays events such as item receipts and hints. A scenario can assert item provider counts, Archipelago location mappings, and hint highlights.
 
 ### Pack ZIP
@@ -90,7 +90,7 @@ Serialize native calls and use a new handle or process when switching APWorlds. 
 
 - **Minimal pack** checks that a basic PopTracker pack loads and runs its Lua scripts. [`minimal`](tests/fixtures/minimal)
 - **Callback pack** checks that item receipts and hints update the tracker across variants. [`callback-pack`](tests/fixtures/callback-pack)
-- **Signal Station pack** tests layouts, settings, and map access rules as Archipelago events arrive. [`signal-station`](tests/fixtures/signal-station)
+- **Signal Station pack** tests layouts, settings, map access rules, and successful Archipelago mapping loads under strict checking. [`signal-station`](tests/fixtures/signal-station)
 - **Signal Station APWorld** tests rebuilding a tracker from seed data and player settings, loading maps, and replaying progress. [`signal_station`](tests/fixtures/signal_station)
 - **Relay Tower APWorld** tests rebuilding without a player YAML file and updating which locations are reachable when seed options change. [`relay_tower`](tests/fixtures/relay_tower)
 - **Tiny World APWorld** isolates item and check replay and tests when a world chooses to reveal entrances. [`tiny_world`](tests/fixtures/tiny_world)

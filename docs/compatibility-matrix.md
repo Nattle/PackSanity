@@ -1,8 +1,8 @@
 # Compatibility matrix
 
 PackSanity targets a headless subset of the upstream contracts. See the
-[PopTracker pack interface](https://github.com/black-sliver/PopTracker/blob/master/doc/PACKS.md),
-[PopTracker autotracking interface](https://github.com/black-sliver/PopTracker/blob/master/doc/AUTOTRACKING.md),
+[PopTracker pack interface](https://github.com/black-sliver/PopTracker/blob/575ee4b29be8e555b7bfa4895e4206f246b399be/doc/PACKS.md),
+[PopTracker autotracking interface](https://github.com/black-sliver/PopTracker/blob/575ee4b29be8e555b7bfa4895e4206f246b399be/doc/AUTOTRACKING.md),
 the integration guides included in the pinned
 [Universal Tracker release](https://github.com/FarisTheAncient/Archipelago/releases/tag/Tracker_v0.3.3),
 and the Archipelago [APWorld specification](https://github.com/ArchipelagoMW/Archipelago/blob/main/docs/apworld%20specification.md)
@@ -13,8 +13,8 @@ and [0.6.8 network protocol](https://github.com/ArchipelagoMW/Archipelago/blob/5
 | API or capability | PackSanity behavior |
 | --- | --- |
 | Lua runtime | Lua 5.4.9 with memory and instruction budgets. |
-| `scripts/init.lua`, `require`, `ScriptHost:LoadScript` | Pack-only script loading. `require` tries a `.lua` file and then a directory's `init.lua` under `scripts/` before trying the archive root. Results are cached by the requested module name. `LoadScript` executes the specified archive script on each call and returns a success boolean. |
-| `Tracker:AddItems/Maps/Locations/Layouts/Classes` | The loader resolves paths for the active variant and retains registration order. Successful item registrations create separate providers with distinct model IDs. A missing path, malformed JSON, or wrong top-level JSON type returns `false` and does not become a registration. Declared location parents resolve against locations registered by earlier calls and pass their access and visibility rules to the attached locations and sections. |
+| `scripts/init.lua`, `require`, `ScriptHost:LoadScript` | Pack-only script loading. `require` converts dots in the requested module name to path separators. It tries a Lua file and then a directory's `init.lua` under `scripts/` before trying the archive root. Each filename lookup folds ASCII case and checks the active variant before the archive root. The cache uses the requested module name. `LoadScript` executes the specified archive script on each call and returns a success boolean. |
+| `Tracker:AddItems/Maps/Locations/Layouts/Classes` | The loader resolves paths for the active variant and retains registration order. Successful item registrations create separate providers with distinct model IDs. Item arrays skip non-object entries with a diagnostic and keep the other items. Item objects with unsupported field shapes use field defaults. A missing path, malformed JSON, or wrong top-level JSON type returns `false` and does not become a registration. Declared location parents resolve against locations registered by earlier calls and pass their access and visibility rules to the attached locations and sections. |
 | Tracker objects, providers, rules, code/frame/location handlers | PopTracker 0.36 compatibility surface with bounded refreshes, live provider counts, hosted items, and canonical region access. JSON item codes are case-insensitive. Lua sees the pack's original section path in `FullID`, and state snapshots use stable model IDs. |
 | Pack `io` | Read-only access to registered in-memory files. |
 | Archipelago callbacks | The host dispatches callbacks and queues outgoing commands. The Kotlin loader and native checker apply the selected variant's flags before running `scripts/init.lua`. Checks and status updates require `apmanual`. Scouts accept `apmanual` or `aphintgame`. The caller handles networking. |

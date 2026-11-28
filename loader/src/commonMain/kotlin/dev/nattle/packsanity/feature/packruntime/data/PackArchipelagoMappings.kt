@@ -6,7 +6,6 @@ import dev.nattle.packsanity.feature.packageimport.domain.PackageArchive
 internal suspend fun PackageArchive.readLocationMappings(
     variantUid: String?,
     variantUids: Set<String>,
-    diagnostics: MutableList<String>,
     logger: PopLogger,
 ): Map<String, Set<Long>> {
     val mappings = mutableMapOf<String, MutableSet<Long>>()
@@ -49,7 +48,6 @@ internal suspend fun PackageArchive.readLocationMappings(
 
     if (mappings.isNotEmpty()) {
         logger.info("Loaded ${mappings.values.sumOf { it.size }} Archipelago location mappings")
-        diagnostics += "Loaded ${mappings.values.sumOf { it.size }} Archipelago location mappings."
     }
     return mappings
 }
@@ -90,7 +88,6 @@ internal fun String.evaluateLuaInteger(constants: Map<String, Long>): Long? {
 
 internal suspend fun PackageArchive.readItemMappings(
     variantUid: String?,
-    diagnostics: MutableList<String>,
     logger: PopLogger,
 ): Map<Long, Set<String>> {
     val source = readText("scripts/autotracking/item_mapping.lua", variantUid) ?: return emptyMap()
@@ -126,7 +123,7 @@ internal suspend fun PackageArchive.readItemMappings(
     }
 
     if (mappings.isNotEmpty()) {
-        diagnostics += "Loaded ${mappings.size} Archipelago item mappings."
+        logger.info("Loaded ${mappings.size} Archipelago item mappings")
     }
     return mappings
 }

@@ -21,10 +21,7 @@
     "items": 8,
     "maps": 2,
     "sections": 7,
-    "diagnostics": [
-      "Loaded 3 Archipelago item mappings.",
-      "Loaded 3 Archipelago location mappings."
-    ],
+    "diagnostics": [],
     "registeredFiles": [
       "items/equipment.json",
       "maps/yard.json",

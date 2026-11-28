@@ -32,19 +32,46 @@ function ScriptHost:RemoveMemoryWatch(_) return false end
 function ScriptHost:AddVariableWatch(_, _, _, _) return false end
 function ScriptHost:RemoveVariableWatch(_) return false end
 
-local pack_module_loaders, pack_module_aliases = {}, {}
+local pack_modules, folded_pack_modules = {}, {}
 local native_require = require
 local loaded_modules = package.loaded
-function PackSanityRegisterModule(path, loader) pack_module_loaders[path] = loader end
-function PackSanityRegisterModuleAlias(alias, path) pack_module_aliases[alias] = path end
 
+local function module_case_key(path)
+return (path:gsub('[A-Z]', ascii_case_keys))
+end
+function PackSanityRegisterModule(path, source)
+pack_modules[path] = source:gsub('^\239\187\191', '')
+local key = module_case_key(path)
+local previous = folded_pack_modules[key]
+if previous == nil or path < previous then folded_pack_modules[key] = path end
+end
+local function pack_module_path(path)
+if pack_modules[path] ~= nil then return path end
+return folded_pack_modules[module_case_key(path)]
+end
+local function run_module(path, name)
+local chunk, message = load(pack_modules[path], '@'..path, 't')
+if chunk == nil then error(message, 0) end
+return chunk(name)
+end
+local function require_path(name)
+-- See docs/compatibility-matrix.md#poptracker for pack module lookup.
+local path = name:gsub('%.', '/')
+for _, root in ipairs({'scripts/', ''}) do
+    for _, stem in ipairs({root..path, root..path..'/init'}) do
+        local upper, lower = stem..'.LUA', stem..'.lua'
+        local resolved = pack_modules[upper] ~= nil and upper or pack_module_path(lower)
+        if resolved ~= nil then return resolved end
+    end
+end
+end
 function require(name)
-local path = pack_module_aliases[name]
-if path == nil then return native_require(name) end
--- PopTracker's luasandbox_require also caches false and passes the requested name.
+if type(name) ~= 'string' then return native_require(name) end
 local result = loaded_modules[name]
 if result ~= nil then return result end
-result = pack_module_loaders[path](name)
+local path = require_path(name)
+if path == nil then return native_require(name) end
+result = run_module(path, name)
 if result == nil then result = true end
 loaded_modules[name] = result
 return result
@@ -67,16 +94,18 @@ return resolved or name
 end
 
 local function run_pack_script(path)
-local name = module_name_for_path(path, pack_module_loaders)
-local loader = pack_module_loaders[name]
-if loader ~= nil then
-    return pcall(loader, (name:gsub('^scripts/', ''):gsub('/', '.')))
+while path:sub(1, 2) == './' do path = path:sub(3) end
+local relative = path:gsub('^/+', '')
+local resolved = pack_module_path(relative) or pack_module_path(relative..'.lua')
+if resolved ~= nil then
+    local name = resolved:gsub('^scripts/', ''):gsub('%.[lL][uU][aA]$', ''):gsub('/', '.')
+    return pcall(run_module, resolved, name)
 end
-if next(pack_module_loaders) ~= nil then return false, 'No such pack script: '..path end
+if next(pack_modules) ~= nil then return false, 'No such pack script: '..path end
 -- Native callers can register their own Lua modules without the archive loader.
-name = module_name_for_path(path, package.preload)
+local name = module_name_for_path(path, package.preload)
 package.loaded[name] = nil
-return pcall(require, name)
+return pcall(native_require, name)
 end
 
 function ScriptHost:LoadScript(path)

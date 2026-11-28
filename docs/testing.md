@@ -11,7 +11,7 @@ assets. Run the pack through both variants and the APWorld through the five-snap
 replay used by the integration suite.
 
 ```sh
-./test-pack.sh tests/fixtures/signal-station --all-variants \
+./test-pack.sh tests/fixtures/signal-station --all-variants --strict \
   --fixture tests/scenarios/signal-station-pack.json
 
 ./test-world.sh tests/fixtures/signal_station --slot 4 --slot-name StationTester \
@@ -22,7 +22,7 @@ replay used by the integration suite.
 
 | Configuration | Fixture coverage |
 | --- | --- |
-| PopTracker | Manifest and variant metadata, settings, all seven JSON item types, a hosted Lua item, a pack settings popup, and Archipelago item, check, storage, scout, and bounce callbacks. The survey terminal covers a cross-file parent, an unnamed grouped section, map-pin visibility, and Lua, count, optional, and inspect rules. The pack scenario expects the parser's two mapping diagnostics and empty missing-image and unresolved-reference lists. |
+| PopTracker | Manifest and variant metadata, settings, all seven JSON item types, a hosted Lua item, a pack settings popup, and Archipelago item, check, storage, scout, and bounce callbacks. The survey terminal covers a cross-file parent, an unnamed grouped section, map-pin visibility, and Lua, count, optional, and inspect rules. The pack scenario verifies mapping and replay with empty diagnostic, missing-image, and unresolved-reference lists. |
 | Universal Tracker | Internal, external, and hybrid map loading, check and entrance aliases, map-specific visibility, automatic map selection, multiple position markers on the active map, deferred entrance and event markers, and slot-data reconstruction. The fixture declares both desktop navigation options in their respective modes. PackSanity exercises the map state while map navigation rendering belongs to the desktop client. |
 | Archipelago | APWorld source metadata, inherited common YAML options, a game-specific toggle, item and location tables, regions, entrances, an event, and seed-shaped slot data. The replay verifies YAML exclusion groups, server check membership, inventory, and reachability before and after reconstruction. |
 
@@ -38,6 +38,9 @@ comes from the companion JSON in external mode and from the APWorld JSON in hybr
 
 ## Upstream contracts covered by the regression tests
 
+- Both pack checkers exercise dotted Lua module names, search precedence, ASCII case
+  matching in ZIP filenames, and the distinct handling of invalid files and non-object
+  item records. [PackSanity PopTracker compatibility](compatibility-matrix.md#poptracker)
 - Pack-relative ZIP lookup follows PopTracker's variant-before-root search. PackSanity
   prefers exact spelling within each search location for deterministic case collisions.
   The Pikmin 2 tracker prompted the case-folded image lookup regression.
@@ -79,7 +82,9 @@ Pass a ZIP or unpacked directory. The default is the pack's default variant. Use
 The checker discovers Lua registrations, starts a fresh session, runs frame handlers,
 and reparses files registered by callbacks. Callback errors and unresolved active
 highlight targets fail the check. `--strict` also fails on parser diagnostics,
-unresolved section references, and missing map images.
+unresolved section references, and missing map images. A skipped non-object item record
+produces a diagnostic. Successful Archipelago mapping loads are logged at info level
+and let a pack with no other issues pass strict mode.
 
 A scenario contains `events` and `expect`. Events run in order and expectations apply
 to each selected variant's final report. Object expectations match specified entries.
